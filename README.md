@@ -9,8 +9,14 @@ A Windows desktop Git client built with Electron, React, and TypeScript.
 
 ## Development status
 
-Phase 1 provides the application shell, repository tabs, native File menu,
-preferences pages, and Git installation check. Repository actions are placeholders.
+Phase 2 adds opening local repositories, local/remote branches and stashes,
+paged commit history, commit metadata, and staged/unstaged file diffs with
+path and tree views. Use File → Open Repo to open a repository in a new tab,
+or Open on a new tab to use that tab. Periodic repository refresh is planned for Phase 8.
+
+Pull, Push, Branch, Fetch, Commit, and commit context-menu actions remain
+placeholders for later phases. Opening and inspecting repositories does not
+stage files, change branches, create commits, or contact remotes.
 
 ## Run
 
@@ -23,4 +29,7 @@ npm.cmd start
 runs the Electron integration workflows after a build. `npm.cmd run dev` serves
 the renderer only; use `npm.cmd start` for the complete desktop application.
 
-SQLite persistence will be introduced when persistent application data is needed.
+Open repository paths are stored in SQLite in the application user-data directory.
+On launch, GitForge reopens those repositories using fresh Git data and skips
+repositories that are missing or no longer accessible. Closed repositories are
+removed from the saved session.

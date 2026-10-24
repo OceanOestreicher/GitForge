@@ -1,8 +1,9 @@
-const { test, expect, _electron: electron } = require('@playwright/test');
+const { test, expect } = require('@playwright/test');
+const { launchElectron } = require('./launch.cjs');
 const path = require('node:path');
 
 test('tabs and preferences preserve the active workspace', async () => {
-  const app = await electron.launch({ args: [path.join(__dirname, '..')] });
+  const app = await launchElectron();
   try {
     const page = await app.firstWindow();
     await expect(page.getByRole('heading', { name: 'Repositories' })).toBeVisible();
@@ -30,7 +31,7 @@ test('tabs and preferences preserve the active workspace', async () => {
 });
 
 test('tab scrolling is available only while tabs overflow', async () => {
-  const app = await electron.launch({ args: [path.join(__dirname, '..')] });
+  const app = await launchElectron();
   try {
     const page = await app.firstWindow();
     await expect(page.getByRole('heading', { name: 'Repositories' })).toBeVisible();
@@ -45,7 +46,7 @@ test('tab scrolling is available only while tabs overflow', async () => {
 
 test('missing Git blocks repository interaction', async () => {
   const env = { ...process.env, PATH: '', Path: '' };
-  const app = await electron.launch({ args: [path.join(__dirname, '..')], env });
+  const app = await launchElectron({ env });
   try {
     const page = await app.firstWindow();
     await expect(page.getByRole('heading', { name: 'Git is required' })).toBeVisible();

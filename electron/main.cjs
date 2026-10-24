@@ -1,6 +1,9 @@
-const { app, BrowserWindow, Menu, ipcMain } = require('electron');
+const { app, BrowserWindow, Menu, ipcMain, dialog } = require('electron');
+const repository = require('./repository.cjs');
+const opened = new Set();
 const { execFile } = require('node:child_process');
 const path = require('node:path');
+const { createSessionStore } = require('./session.cjs');
 
 let window;
 let gitAvailable = false;
@@ -11,7 +14,22 @@ function checkGit() {
 }
 
 app.whenReady().then(async () => {
+  const dataDirectory = app.commandLine.getSwitchValue('user-data-dir') || app.getPath('userData');
+  const session = createSessionStore(dataDirectory);
   gitAvailable = await checkGit();
+  const restored = [];
+  let restoredActive = 0;
+  if (gitAvailable) {
+    for (const saved of session.load()) {
+      try {
+        const data = await repository.openRepository(saved.path);
+        opened.add(data.path);
+        if (saved.active) restoredActive = restored.length;
+        restored.push(data);
+      } catch { /* Missing or no longer readable repositories do not get tabs. */ }
+    }
+    session.save(restored.map(repo => repo.path), restoredActive);
+  }
   const send = action => window?.webContents.send('menu-action', action);
   const menu = Menu.buildFromTemplate([{ label: 'File', submenu: [
     { label: 'New Tab', accelerator: 'CmdOrCtrl+T', enabled: gitAvailable, click: () => send('new-tab') },
@@ -19,13 +37,31 @@ app.whenReady().then(async () => {
     { type: 'separator' },
     { label: 'Clone Repo', enabled: gitAvailable, click() {} },
     { label: 'Init Repo', enabled: gitAvailable, click() {} },
-    { label: 'Open Repo', enabled: gitAvailable, click() {} },
+    { label: 'Open Repo', accelerator: 'CmdOrCtrl+O', enabled: gitAvailable, click: () => send('open-repo') },
     { type: 'separator' },
     { label: 'Exit', click: () => app.quit() }
   ] }]);
   closeTabItem = menu.getMenuItemById('close-tab');
   Menu.setApplicationMenu(menu);
   ipcMain.handle('git-status', () => gitAvailable);
+  ipcMain.handle('restore-session', () => ({ repositories: restored, activeIndex: restoredActive }));
+  ipcMain.handle('save-session', (_event, paths, activeIndex) => {
+    if (!gitAvailable || !Array.isArray(paths) || !paths.every(root => opened.has(root)) || !Number.isInteger(activeIndex)) throw new Error('Invalid repository session.');
+    session.save(paths, activeIndex);
+  });
+  ipcMain.handle('open-repository', async () => {
+    const result = await dialog.showOpenDialog(window, { title: 'Open Git repository', properties: ['openDirectory'] });
+    if (result.canceled || !result.filePaths.length) return null;
+    const data = await repository.openRepository(result.filePaths[0]);
+    opened.add(data.path);
+    return data;
+  });
+  for (const [channel, method] of [['repository-snapshot', 'snapshot'], ['commit-details', 'commitDetails'], ['file-diff', 'diff'], ['more-commits', 'commits']]) {
+    ipcMain.handle(channel, async (_event, root, argument) => {
+      if (!opened.has(root)) throw new Error('Open this repository first.');
+      return repository[method](root, argument);
+    });
+  }
   ipcMain.on('tab-active', (_event, active) => { closeTabItem.enabled = gitAvailable && active === true; });
   window = new BrowserWindow({ width: 1200, height: 800, minWidth: 680, minHeight: 440, title: 'GitForge', backgroundColor: '#1e2025', webPreferences: {
     preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true

@@ -25,6 +25,10 @@ declare global {
       commitChanges(root: string, input: { title: string; description: string }): Promise<Repository>;
       preparePush(root: string): Promise<PushPlan>;
       pushCommits(root: string, input: PushInput): Promise<Repository>;
+      fetchRepository(root: string): Promise<Repository>;
+      pullRepository(root: string): Promise<Repository>;
+      onRepositoryChanged(callback: (repo: Repository) => void): () => void;
+      onRefreshError(callback: (error: { path: string; message: string }) => void): () => void;
       chooseParentDirectory(): Promise<string | null>;
       snapshot(root: string): Promise<Repository>;
       commitDetails(root: string, hash: string): Promise<{ message: string; files: FileChange[] }>;
@@ -54,6 +58,10 @@ function App() {
   const tabNavigation = useRef<HTMLDivElement>(null);
   const nextId = useRef(2);
   const tabStrip = useRef<HTMLDivElement>(null);
+  useEffect(() => window.gitforge.onRepositoryChanged(repo => {
+    setRepositories(previous => Object.fromEntries(Object.entries(previous).map(([id, value]) => [id, value.path === repo.path ? repo : value])));
+  }), []);
+  useEffect(() => window.gitforge.onRefreshError(error => setOpenError(error.message)), []);
   const openRepository = async (newWindow: boolean) => {
     if (opening) return;
     setOpening(true); setOpenError('');

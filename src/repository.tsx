@@ -4,7 +4,7 @@ import { PushDialog, type PushPlan } from './push';
 
 export type FileChange = { path: string; status: string; untracked?: boolean; oldPath?: string };
 export type Commit = { hash: string; parents: string[]; author: string; date: string; subject: string; refs: string };
-export type Repository = { path: string; name: string; branch: string; local: string[]; remote: string[]; ahead: Record<string, number>; unpushed: number; stashes: string[]; staged: FileChange[]; unstaged: FileChange[]; commits: Commit[] };
+export type Repository = { path: string; name: string; branch: string; local: string[]; remote: string[]; ahead: Record<string, number>; behind: Record<string, number>; fileVersion: string; unpushed: number; stashes: string[]; staged: FileChange[]; unstaged: FileChange[]; commits: Commit[] };
 type Selection = { file: FileChange; staged?: boolean; hash?: string };
 
 function FileList({ files, tree, select, selectedPath, markedPaths = [], doubleClick, discard }: { files: FileChange[]; tree: boolean; select: (file: FileChange, event: React.MouseEvent<HTMLButtonElement>) => void; selectedPath?: string; markedPaths?: string[]; doubleClick?: (file: FileChange) => void; discard?: () => void }) {
@@ -100,6 +100,20 @@ export function RepositoryView({ initial, updated }: { initial: Repository; upda
       else accept(await window.gitforge.pushCommits(repo.path, { force: false }));
     } catch(error) { setError(message(error)); } finally { setBusy(false); }
   };
+  const runRemote = async (action: 'fetch' | 'pull') => {
+    if (busy) return; setBusy(true); setError('');
+    try { accept(await (action === 'fetch' ? window.gitforge.fetchRepository(repo.path) : window.gitforge.pullRepository(repo.path))); }
+    catch(error) { setError(message(error)); } finally { setBusy(false); }
+  };
+  useEffect(() => {
+    setRepo(previous => {
+      const sameHistory = initial.commits.every((commit, index) => previous.commits[index]?.hash === commit.hash) && initial.commits.length <= previous.commits.length;
+      if (!sameHistory) setHasMore(initial.commits.length === 200);
+      return sameHistory ? { ...initial, commits: previous.commits.map(commit => initial.commits.find(fresh => fresh.hash === commit.hash) ?? commit) } : initial;
+    });
+    setSelection(previous => !previous || previous.hash || (previous.staged ? initial.staged : initial.unstaged).some(file => file.path === previous.file.path) ? previous : null);
+    setPicked(previous => ({ ...previous, paths: previous.paths.filter(path => (previous.staged ? initial.staged : initial.unstaged).some(file => file.path === path)) }));
+  }, [initial]);
   const requestId = useRef(0);
   const toggleFile = (next: Selection) => {
     setSelection(previous => previous?.file.path === next.file.path
@@ -119,7 +133,7 @@ export function RepositoryView({ initial, updated }: { initial: Repository; upda
     setDiff('');
     if (!selection) return;
     window.gitforge.fileDiff(repo.path, { ...selection.file, staged: selection.staged, hash: selection.hash }).then(value => { if (id === requestId.current) setDiff(value || 'No textual changes.'); }).catch(e => { if (id === requestId.current) setError(String(e)); });
-  }, [selection, repo.path]);
+  }, [selection, repo.path, repo.fileVersion]);
   useEffect(() => {
     const close = () => setContext(null);
     const key = (event: KeyboardEvent) => { if (event.key === 'Escape') close(); };
@@ -127,11 +141,11 @@ export function RepositoryView({ initial, updated }: { initial: Repository; upda
     return () => { window.removeEventListener('click', close); window.removeEventListener('keydown', key); };
   }, []);
   return <div className="repository">
-    <header className="repo-actions"><div className="repo-name" title={repo.path}><strong>{repo.name}</strong><span>{repo.branch}</span></div><div className="repo-buttons"><button>Pull</button><div className="push-control"><button disabled={busy || !repo.unpushed} onClick={() => void startPush(false)}>Push</button><button disabled={busy || !repo.unpushed} aria-label="Push options" onClick={() => setPushMenu(value => !value)}>&#9662;</button>{pushMenu && <div className="profile-menu"><button onClick={() => void startPush(true)}>Force Push</button></div>}</div><button>Branch</button><button>Fetch</button></div></header>
+    <header className="repo-actions"><div className="repo-name" title={repo.path}><strong>{repo.name}</strong><span>{repo.branch}</span></div><div className="repo-buttons"><button disabled={busy} onClick={() => void runRemote('pull')}>Pull</button><div className="push-control"><button disabled={busy || !repo.unpushed} onClick={() => void startPush(false)}>Push</button><button disabled={busy || !repo.unpushed} aria-label="Push options" onClick={() => setPushMenu(value => !value)}>&#9662;</button>{pushMenu && <div className="profile-menu"><button onClick={() => void startPush(true)}>Force Push</button></div>}</div><button>Branch</button><button disabled={busy} onClick={() => void runRemote('fetch')}>Fetch</button></div></header>
     {error && <div className="error" role="alert">{error}<button onClick={() => setError('')}>Dismiss</button></div>}
     <div className="repo-layout">
       <aside className="repo-sidebar">
-        <details className="sidebar-group" open><summary>Local branches</summary><div className="sidebar-items">{repo.local.map(branch => <div className={branch === repo.branch ? 'current-branch' : ''} key={branch}>{branch === repo.branch ? '\u25CF ' : ''}{branch}{repo.ahead[branch] > 0 && <span className="ahead-count" aria-label={`${repo.ahead[branch]} commits to push`}> {repo.ahead[branch]} <span aria-hidden="true">&#8593;</span></span>}</div>)}{!repo.local.length && <p className="muted">No local branches</p>}</div></details>
+        <details className="sidebar-group" open><summary>Local branches</summary><div className="sidebar-items">{repo.local.map(branch => <div className={branch === repo.branch ? 'current-branch' : ''} key={branch}>{branch === repo.branch ? '\u25CF ' : ''}{branch}{repo.ahead[branch] > 0 && <span className="ahead-count" aria-label={`${repo.ahead[branch]} commits to push`}> {repo.ahead[branch]} <span aria-hidden="true">&#8593;</span></span>}{repo.behind[branch] > 0 && <span className="behind-count" aria-label={`${repo.behind[branch]} commits to pull`}> {repo.behind[branch]} <span aria-hidden="true">&#8595;</span></span>}</div>)}{!repo.local.length && <p className="muted">No local branches</p>}</div></details>
         <details className="sidebar-group"><summary>Remote branches</summary><div className="sidebar-items">{repo.remote.map(branch => <div key={branch}>{branch}</div>)}{!repo.remote.length && <p className="muted">No remote branches</p>}</div></details>
         <details className="sidebar-group"><summary>Stashes</summary><div className="sidebar-items">{repo.stashes.map(stash => <div key={stash}>{stash}</div>)}{!repo.stashes.length && <p className="muted">No stashes</p>}</div></details>
       </aside>

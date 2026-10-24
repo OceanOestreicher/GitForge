@@ -12,11 +12,11 @@ A Windows desktop Git client built with Electron, React, and TypeScript.
 Phase 2 adds opening local repositories, local/remote branches and stashes,
 paged commit history, commit metadata, and staged/unstaged file diffs with
 path and tree views. Use File → Open Repo to open a repository in a new tab,
-or Open on a new tab to use that tab. Periodic repository refresh is planned for Phase 7.
+or Open on a new tab to use that tab.
 
-Pull, Branch, Fetch, and commit context-menu actions remain
+Branch and commit context-menu actions remain
 placeholders for later phases. Opening and inspecting repositories does not
-stage files, change branches, create commits, or contact remotes.
+stage files, change branches, or create commits.
 
 Phase 3 adds local repository initialization through Create or File → Init Repo.
 Enter a repository name, an existing absolute parent directory, and a default
@@ -46,6 +46,13 @@ Push publishes commits; the adjacent options menu offers confirmed Force Push.
 Missing remote branches and GitHub repositories require confirmation before
 creation. Repository visibility is explicitly selected when creating a remote.
 
+Phase 7 adds automatic local refresh (once per second), remote refresh (every
+five minutes), Fetch, Pull, and behind counts displayed as `N ↓`. Fetch updates
+remote-tracking branches without changing local branches or working files.
+Pull fetches the upstream, fast-forwards where possible, and otherwise merges
+using the active profile identity. Uncommitted changes block Pull. Conflicting
+pull merges are aborted and reported until Phase 9 adds conflict resolution.
+
 ## Run
 
 ```powershell
@@ -61,3 +68,5 @@ Open repository paths are stored in SQLite in the application user-data director
 On launch, GitForge reopens those repositories using fresh Git data and skips
 repositories that are missing or no longer accessible. Closed repositories are
 removed from the saved session.
+
+test

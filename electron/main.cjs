@@ -3,6 +3,8 @@ const { verifyGitHub } = require('./github.cjs');
 const { createProfileStore } = require('./profiles.cjs');
 const { cloneRepository } = require('./clone.cjs');
 const pushing = require('./push.cjs');
+const pulling = require('./pull.cjs');
+const { startRefresh } = require('./refresh.cjs');
 const repository = require('./repository.cjs');
 const opened = new Set();
 const { execFile } = require('node:child_process');
@@ -23,15 +25,19 @@ app.whenReady().then(async () => {
   const profiles = createProfileStore(dataDirectory, safeStorage, (username, pat) => verifyGitHub(username, pat, (...args) => net.fetch(...args)));
   const activeProfile = () => { const profile = profiles.list().find(profile => profile.active); if (!profile) throw new Error('Select an active profile first.'); return profile; };
   const operations = new Set();
+  const operationVersions = new Map();
   const mutate = async (root, work) => {
     requireProfile();
     if (!opened.has(root)) throw new Error('Open this repository first.');
     if (operations.has(root)) throw new Error('A repository operation is already in progress.');
-    operations.add(root); try { return await work(); } finally { operations.delete(root); }
+    operationVersions.set(root, (operationVersions.get(root) || 0) + 1);
+    operations.add(root); try { return await work(); } finally { operations.delete(root); operationVersions.set(root, (operationVersions.get(root) || 0) + 1); }
   };
   const requireProfile = () => { if (!profiles.list().length) throw new Error('Create a profile before using repositories.'); };
   gitAvailable = await checkGit();
   const restored = [];
+  let savedRoots = [];
+  const snapshots = new Map();
   let restoredActive = 0;
   if (gitAvailable) {
     for (const saved of session.load()) {
@@ -45,6 +51,16 @@ app.whenReady().then(async () => {
     session.save(restored.map(repo => repo.path), restoredActive);
   }
   const send = action => window?.webContents.send('menu-action', action);
+  savedRoots = restored.map(repo => repo.path);
+  restored.forEach(repo => snapshots.set(repo.path, JSON.stringify(repo)));
+  const publish = data => {
+    const value = JSON.stringify(data);
+    if (snapshots.get(data.path) !== value) {
+      snapshots.set(data.path, value);
+      window?.webContents.send('repository-changed', data);
+    }
+    return data;
+  };
   const menu = Menu.buildFromTemplate([{ label: 'File', submenu: [
     { label: 'New Tab', accelerator: 'CmdOrCtrl+T', enabled: gitAvailable, click: () => send('new-tab') },
     { id: 'close-tab', label: 'Close Tab', accelerator: 'CmdOrCtrl+W', enabled: false, click: () => send('close-tab') },
@@ -72,6 +88,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('save-session', (_event, paths, activeIndex) => {
     if (!gitAvailable || !Array.isArray(paths) || !paths.every(root => opened.has(root)) || !Number.isInteger(activeIndex)) throw new Error('Invalid repository session.');
     session.save(paths, activeIndex);
+    savedRoots = [...new Set(paths)];
   });
   ipcMain.handle('open-repository', async () => {
     requireProfile();
@@ -104,6 +121,8 @@ app.whenReady().then(async () => {
   ipcMain.handle('commit-changes', (_event, root, input) => mutate(root, () => repository.commit(root, input, activeProfile())));
   ipcMain.handle('prepare-push', (_event, root) => mutate(root, () => pushing.destination(root, profiles.credentials())));
   ipcMain.handle('push-commits', (_event, root, input) => mutate(root, () => pushing.push(root, input, profiles.credentials(), (...args) => net.fetch(...args))));
+  ipcMain.handle('fetch-repository', (_event, root) => mutate(root, async () => publish(await pulling.fetchRemotes(root, profiles.credentials()))));
+  ipcMain.handle('pull-repository', (_event, root) => mutate(root, async () => publish(await pulling.pull(root, profiles.credentials(), activeProfile()))));
   ipcMain.handle('choose-parent-directory', async () => {
     requireProfile();
     const result = await dialog.showOpenDialog(window, { title: 'Choose parent directory', properties: ['openDirectory'] });
@@ -123,5 +142,21 @@ app.whenReady().then(async () => {
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', event => event.preventDefault());
   await window.loadFile(path.join(__dirname, '../dist/index.html'));
+  const stopRefresh = startRefresh({
+    roots: () => gitAvailable && profiles.list().length ? savedRoots : [],
+    local: async root => {
+      if (operations.has(root)) return;
+      const version = operationVersions.get(root);
+      const data = await repository.snapshot(root);
+      if (!operations.has(root) && operationVersions.get(root) === version && savedRoots.includes(root)) publish(data);
+    },
+    remote: async root => {
+      if (operations.has(root)) return;
+      if (!(await repository.git(root, ['remote'])).trim()) return;
+      await mutate(root, async () => publish(await pulling.fetchRemotes(root, profiles.credentials())));
+    },
+    error: (root, failure) => window?.webContents.send('repository-refresh-error', { path: root, message: failure.message })
+  });
+  app.on('before-quit', stopRefresh);
 });
 app.on('window-all-closed', () => app.quit());

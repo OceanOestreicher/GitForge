@@ -38,12 +38,17 @@ async function snapshot(root) {
       if (y !== ' ') unstaged.push({ path: file, oldPath, status: y });
     }
   }
-  const ahead = {};
+  const ahead = {}, behind = {};
   await Promise.all(local.map(async name => {
     const upstream = (await git(root, ['for-each-ref', '--format=%(upstream)', `refs/heads/${name}`])).trim();
     ahead[name] = Number((await git(root, ['rev-list', '--count', `refs/heads/${name}`, ...(upstream ? ['--not', upstream] : ['--not', '--remotes'])]).catch(() => '0')).trim());
+    behind[name] = upstream ? Number((await git(root, ['rev-list', '--count', upstream, '--not', `refs/heads/${name}`]).catch(() => '0')).trim()) : 0;
   }));
-  return { path: root, name: path.basename(root), branch: branch.trim(), local, remote, ahead, unpushed: ahead[branch.trim()] || 0, stashes: stash.trim().split('\n').filter(Boolean), staged, unstaged, commits: history };
+  const fileVersion = (await Promise.all([...new Set([...staged, ...unstaged].map(file => file.path)), '.git/index'].map(async file => {
+    const stat = await fs.lstat(path.join(root, file)).catch(() => null);
+    return `${file}:${stat?.mtimeMs}:${stat?.ctimeMs}:${stat?.size}`;
+  }))).join('|');
+  return { path: root, name: path.basename(root), branch: branch.trim(), local, remote, ahead, behind, fileVersion, unpushed: ahead[branch.trim()] || 0, stashes: stash.trim().split('\n').filter(Boolean), staged, unstaged, commits: history };
 }
 async function openRepository(folder) {
   if ((await git(folder, ['rev-parse', '--is-bare-repository'])).trim() === 'true') throw new Error('Bare repositories are not supported. Choose a repository working folder.');

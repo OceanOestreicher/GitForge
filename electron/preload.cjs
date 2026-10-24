@@ -15,6 +15,18 @@ contextBridge.exposeInMainWorld('gitforge', {
   commitChanges: (root, input) => ipcRenderer.invoke('commit-changes', root, input),
   preparePush: root => ipcRenderer.invoke('prepare-push', root),
   pushCommits: (root, input) => ipcRenderer.invoke('push-commits', root, input),
+  fetchRepository: root => ipcRenderer.invoke('fetch-repository', root),
+  pullRepository: root => ipcRenderer.invoke('pull-repository', root),
+  onRepositoryChanged: callback => {
+    const listener = (_event, data) => callback(data);
+    ipcRenderer.on('repository-changed', listener);
+    return () => ipcRenderer.removeListener('repository-changed', listener);
+  },
+  onRefreshError: callback => {
+    const listener = (_event, data) => callback(data);
+    ipcRenderer.on('repository-refresh-error', listener);
+    return () => ipcRenderer.removeListener('repository-refresh-error', listener);
+  },
   chooseParentDirectory: () => ipcRenderer.invoke('choose-parent-directory'),
   snapshot: root => ipcRenderer.invoke('repository-snapshot', root),
   commitDetails: (root, hash) => ipcRenderer.invoke('commit-details', root, hash),

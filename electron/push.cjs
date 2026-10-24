@@ -6,11 +6,11 @@ function authEnv(credentials) {
   const env = { ...process.env, GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'Never', GIT_CONFIG_COUNT: '2', GIT_CONFIG_KEY_0: 'http.https://github.com/.extraHeader', GIT_CONFIG_VALUE_0: '', GIT_CONFIG_KEY_1: 'http.https://github.com/.extraHeader', GIT_CONFIG_VALUE_1: `Authorization: Basic ${Buffer.from(`${credentials.username}:${credentials.pat}`).toString('base64')}` };
   delete env.GIT_CONFIG_PARAMETERS; return env;
 }
-function remoteGit(root, args, credentials) {
+function remoteGit(root, args, credentials, operation = 'push') {
   return new Promise((resolve, reject) => cp.execFile('git', ['-c', 'credential.helper=', '-c', 'http.followRedirects=false', ...args], { cwd: root, env: authEnv(credentials), windowsHide: true, timeout: 300000, maxBuffer: 8 * 1024 * 1024 }, (error, stdout, stderr) => {
     if (!error) return resolve(stdout);
     const message = stderr || '';
-    const failure = new Error(/non-fast-forward|fetch first|stale info/i.test(message) ? 'Push was rejected because the remote branch contains changes missing locally. Pull and review those changes, or explicitly choose Force Push to overwrite the remote.' : /authentication|401|403|repository not found|permission|access denied/i.test(message) ? 'GitHub denied the push. Check the remote URL, active profile PAT write access, expiration, and organization SSO approval.' : /resolve host|connect|timed out|network/i.test(message) ? 'Could not connect to the remote. Check your network, proxy or firewall and retry.' : 'Git could not push. Check remote permissions, branch protection, server availability, and any pre-push hooks.');
+    const failure = new Error(/non-fast-forward|fetch first|stale info/i.test(message) ? 'Push was rejected because the remote branch contains changes missing locally. Pull and review those changes, or explicitly choose Force Push to overwrite the remote.' : /authentication|401|403|repository not found|permission|access denied/i.test(message) ? `The remote denied the ${operation}. Check the remote URL, active profile PAT permissions, expiration, and organization SSO approval.` : /resolve host|connect|timed out|network/i.test(message) ? 'Could not connect to the remote. Check your network, proxy or firewall and retry.' : `Git could not ${operation}. Check remote permissions, server availability, and Git hooks.`);
     failure.missing = /repository not found|404/i.test(message); failure.exitCode = error.code; reject(failure);
   }));
 }
@@ -60,4 +60,4 @@ async function push(root, input, credentials, fetch) {
   await remoteGit(root, ['push', '--set-upstream', ...(input.force ? ['--force'] : []), '--', plan.remote, `HEAD:refs/heads/${plan.target}`], credentials);
   return snapshot(root);
 }
-module.exports = { destination, push };
+module.exports = { destination, push, remoteGit };

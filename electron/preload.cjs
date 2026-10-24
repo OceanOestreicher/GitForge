@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld('gitforge', {
   saveSession: (paths, activeIndex) => ipcRenderer.invoke('save-session', paths, activeIndex),
   openRepository: () => ipcRenderer.invoke('open-repository'),
   createRepository: input => ipcRenderer.invoke('create-repository', input),
+  cloneRepository: input => ipcRenderer.invoke('clone-repository', input),
   chooseParentDirectory: () => ipcRenderer.invoke('choose-parent-directory'),
   snapshot: root => ipcRenderer.invoke('repository-snapshot', root),
   commitDetails: (root, hash) => ipcRenderer.invoke('commit-details', root, hash),

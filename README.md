@@ -31,6 +31,12 @@ being saved in SQLite; profile lists never include tokens. Leaving the PAT blank
 when editing preserves it. Deleting the active profile selects the first remaining
 profile alphabetically; deleting the last returns to required profile setup.
 
+Phase 5 adds Clone on new tabs and File → Clone Repo. Enter a GitHub HTTPS
+clone URL and type or browse for an existing parent directory. The clone is
+created at `parent/repository-name` using the active profile credentials.
+Existing destinations are never overwritten. Errors keep the form open for
+correction and retry; credentials are not stored in the remote URL or Git config.
+
 ## Run
 
 ```powershell

@@ -24,6 +24,12 @@ function createProfileStore(directory, safeStorage, verify) {
   const exists = id => { if (typeof id !== 'string' || !db.prepare('SELECT id FROM profiles WHERE id=?').get(id)) throw new Error('The profile no longer exists.'); };
   return {
     list,
+    credentials() {
+      const profile = db.prepare('SELECT username,pat FROM profiles WHERE active=1').get();
+      if (!profile) throw new Error('Create and select a profile before cloning.');
+      try { return { username: profile.username, pat: safeStorage.decryptString(Buffer.from(profile.pat)) }; }
+      catch { throw new Error('The active profile PAT could not be decrypted. Edit the profile and enter a new PAT.'); }
+    },
     async create(input) {
       const data = validate(input, true), encrypted = encrypt(data.pat);
       await verify(data.username, data.pat);

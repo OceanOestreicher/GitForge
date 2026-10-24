@@ -1,6 +1,7 @@
 const { app, BrowserWindow, Menu, ipcMain, dialog, safeStorage, net } = require('electron');
 const { verifyGitHub } = require('./github.cjs');
 const { createProfileStore } = require('./profiles.cjs');
+const { cloneRepository } = require('./clone.cjs');
 const repository = require('./repository.cjs');
 const opened = new Set();
 const { execFile } = require('node:child_process');
@@ -39,7 +40,7 @@ app.whenReady().then(async () => {
     { label: 'New Tab', accelerator: 'CmdOrCtrl+T', enabled: gitAvailable, click: () => send('new-tab') },
     { id: 'close-tab', label: 'Close Tab', accelerator: 'CmdOrCtrl+W', enabled: false, click: () => send('close-tab') },
     { type: 'separator' },
-    { label: 'Clone Repo', enabled: gitAvailable, click() {} },
+    { label: 'Clone Repo', enabled: gitAvailable, click: () => send('clone-repo') },
     { label: 'Init Repo', enabled: gitAvailable, click: () => send('init-repo') },
     { label: 'Open Repo', accelerator: 'CmdOrCtrl+O', enabled: gitAvailable, click: () => send('open-repo') },
     { type: 'separator' },
@@ -77,6 +78,18 @@ app.whenReady().then(async () => {
     const data = await repository.createRepository(input);
     opened.add(data.path);
     return data;
+  });
+  let cloning = false;
+  ipcMain.handle('clone-repository', async (_event, input) => {
+    requireProfile();
+    if (!gitAvailable) throw new Error('Git is required to clone a repository.');
+    if (cloning) throw new Error('A clone is already in progress. Wait for it to finish.');
+    cloning = true;
+    try {
+      const data = await cloneRepository(input, profiles.credentials());
+      opened.add(data.path);
+      return data;
+    } finally { cloning = false; }
   });
   ipcMain.handle('choose-parent-directory', async () => {
     requireProfile();

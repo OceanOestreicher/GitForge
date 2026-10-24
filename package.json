@@ -1,0 +1,25 @@
+{
+  "name": "gitforge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A Windows desktop Git client",
+  "main": "electron/main.cjs",
+  "dependencies": {
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.56.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "electron": "^44.0.0",
+    "typescript": "^5.9.0",
+    "vite": "^8.0.0"
+  },
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc --noEmit && vite build",
+    "start": "npm run build && electron .",
+    "test": "playwright test"
+  }
+}

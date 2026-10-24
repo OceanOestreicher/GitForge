@@ -3,11 +3,17 @@ import { createRoot } from 'react-dom/client';
 import './style.css';
 import { RepositoryView, type Repository, type Commit, type FileChange } from './repository';
 import { CreateRepository } from './create-repository';
+import { ProfilesPage, type Profile, type ProfileInput } from './profiles';
 
 declare global {
   interface Window {
     gitforge: {
       gitStatus(): Promise<boolean>;
+      listProfiles(): Promise<Profile[]>;
+      createProfile(input: ProfileInput): Promise<Profile[]>;
+      editProfile(id: string, input: ProfileInput): Promise<Profile[]>;
+      switchProfile(id: string): Promise<Profile[]>;
+      deleteProfile(id: string): Promise<Profile[]>;
       restoreSession(): Promise<{ repositories: Repository[]; activeIndex: number }>;
       saveSession(paths: string[], activeIndex: number): Promise<void>;
       openRepository(): Promise<Repository | null>;
@@ -26,6 +32,9 @@ declare global {
 function App() {
   const [ready, setReady] = useState<boolean | null>(null);
   const [sessionReady, setSessionReady] = useState(false);
+  const [profiles, setProfiles] = useState<Profile[]>([]);
+  const activeProfile = profiles.find(profile => profile.active);
+  const profileRequired = profiles.length === 0;
   const [tabs, setTabs] = useState<number[]>([1]);
   const [repositories, setRepositories] = useState<Record<number, Repository>>({});
   const [openError, setOpenError] = useState('');
@@ -33,7 +42,6 @@ function App() {
   const [createTarget, setCreateTarget] = useState<{ tab: number | null } | null>(null);
   const [active, setActive] = useState<number | null>(1);
   const [preferences, setPreferences] = useState(false);
-  const [page, setPage] = useState('General');
   const [overflowing, setOverflowing] = useState(false);
   const tabNavigation = useRef<HTMLDivElement>(null);
   const nextId = useRef(2);
@@ -69,6 +77,9 @@ function App() {
       if (!alive) return;
       if (!available) { setReady(false); return; }
       try {
+        const values = await window.gitforge.listProfiles();
+        if (!alive) return;
+        setProfiles(values);
         const saved = await window.gitforge.restoreSession();
         if (!alive) return;
         if (saved.repositories.length) {
@@ -90,12 +101,12 @@ function App() {
     void window.gitforge.saveSession(repositoryTabs.map(id => repositories[id].path), active === null ? -1 : repositoryTabs.indexOf(active)).catch(error => setOpenError(String(error)));
   }, [sessionReady, tabs, repositories, active]);
   useEffect(() => window.gitforge.onMenuAction(action => {
-    if (ready !== true) return;
+    if (ready !== true || profileRequired) return;
     if (action === 'new-tab') newTab();
     if (action === 'open-repo') void openRepository(true);
     if (action === 'init-repo' && !createTarget) setCreateTarget({ tab: null });
     if (action === 'close-tab' && active !== null) closeTab(active);
-  }), [ready, tabs, active, opening, createTarget]);
+  }), [ready, tabs, active, opening, createTarget, profileRequired]);
   useEffect(() => { window.gitforge.setTabActive(ready === true && active !== null); }, [ready, active]);
   useEffect(() => {
     const navigation = tabNavigation.current;
@@ -114,7 +125,7 @@ function App() {
   if (ready !== true) return <main className="notice" role="status"><h1>{ready === null ? 'Starting GitForge…' : 'Git is required'}</h1>{ready === false && <p>Install Git for Windows and ensure it is available on PATH, then restart GitForge.</p>}</main>;
   return <div className="app">
     <header className="tabbar">
-      <div className="tab-navigation" ref={tabNavigation}>
+      <div className="tab-navigation" ref={tabNavigation} inert={profileRequired}>
       {overflowing && <button className="icon scroll" aria-label="Scroll tabs left" onClick={() => tabStrip.current?.scrollBy({ left: -240, behavior: 'smooth' })}>‹</button>}
       <div className="tabs" ref={tabStrip} role="tablist" aria-label="Repository tabs">
         {tabs.map(id => <div className={`tab ${active === id ? 'active' : ''}`} key={id}>
@@ -125,14 +136,15 @@ function App() {
       {overflowing && <button className="icon scroll" aria-label="Scroll tabs right" onClick={() => tabStrip.current?.scrollBy({ left: 240, behavior: 'smooth' })}>›</button>}
       <button className="icon" aria-label="New Tab" title="New Tab (Ctrl+T)" onClick={newTab}>+</button>
       </div>
-      <button className={`icon settings ${preferences ? 'selected' : ''}`} aria-label="Preferences" aria-pressed={preferences} title="Preferences" onClick={() => { if (!preferences) setPage('General'); setPreferences(previous => !previous); }}>⚙</button>
+      {activeProfile && <span className="active-profile-name" aria-label="Active profile name" title={activeProfile.name}>{activeProfile.name}</span>}
+      <button className={`icon settings ${preferences ? 'selected' : ''}`} disabled={profileRequired} aria-label="Preferences" aria-pressed={preferences || profileRequired} title="Preferences" onClick={() => { setPreferences(previous => !previous); }}>⚙</button>
     </header>
     {openError && <div role="alert" className="error">{openError}<button onClick={() => setOpenError('')}>Dismiss</button></div>}
     {opening && <div role="status" className="opening">Opening repository…</div>}
-    {preferences ? <div className="preferences">
-      <aside><button className="back" onClick={() => setPreferences(false)}>← Exit Preferences</button>
-        <nav aria-label="Preferences pages">{['General', 'Profiles'].map(name => <button key={name} aria-current={page === name ? 'page' : undefined} className={page === name ? 'selected' : ''} onClick={() => setPage(name)}>{name}</button>)}</nav>
-      </aside><main className="preference-page"><h1>{page}</h1></main>
+    {preferences || profileRequired ? <div className="preferences">
+      <aside><button className="back" disabled={profileRequired} onClick={() => setPreferences(false)}>← Exit Preferences</button>
+        <nav aria-label="Preferences pages"><button aria-current="page" className="selected">Profiles</button></nav>
+      </aside><main className="preference-page"><ProfilesPage profiles={profiles} updated={values => { setProfiles(values); setPreferences(true); }}/></main>
     </div> : active !== null && repositories[active] ? <RepositoryView key={active} initial={repositories[active]}/> : active !== null ? <main className="welcome"><h1>Repositories</h1><div className="actions">
       <button disabled={opening} onClick={() => void openRepository(false)}><span aria-hidden="true">▰</span> Open</button>
       <button><span aria-hidden="true">↓</span> Clone</button>

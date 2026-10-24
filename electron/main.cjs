@@ -1,4 +1,6 @@
-const { app, BrowserWindow, Menu, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, Menu, ipcMain, dialog, safeStorage, net } = require('electron');
+const { verifyGitHub } = require('./github.cjs');
+const { createProfileStore } = require('./profiles.cjs');
 const repository = require('./repository.cjs');
 const opened = new Set();
 const { execFile } = require('node:child_process');
@@ -16,6 +18,8 @@ function checkGit() {
 app.whenReady().then(async () => {
   const dataDirectory = app.commandLine.getSwitchValue('user-data-dir') || app.getPath('userData');
   const session = createSessionStore(dataDirectory);
+  const profiles = createProfileStore(dataDirectory, safeStorage, (username, pat) => verifyGitHub(username, pat, (...args) => net.fetch(...args)));
+  const requireProfile = () => { if (!profiles.list().length) throw new Error('Create a profile before using repositories.'); };
   gitAvailable = await checkGit();
   const restored = [];
   let restoredActive = 0;
@@ -43,6 +47,16 @@ app.whenReady().then(async () => {
   ] }]);
   closeTabItem = menu.getMenuItemById('close-tab');
   Menu.setApplicationMenu(menu);
+  let tabActive = false;
+  const updateMenu = () => {
+    const enabled = gitAvailable && profiles.list().length > 0;
+    for (const item of menu.items[0].submenu.items) if (!['separator'].includes(item.type) && item.label !== 'Exit') item.enabled = enabled && (item.id !== 'close-tab' || tabActive);
+  };
+  updateMenu();
+  ipcMain.handle('list-profiles', () => profiles.list());
+  for (const [channel, method] of [['create-profile', 'create'], ['edit-profile', 'edit'], ['switch-profile', 'switch'], ['delete-profile', 'delete']]) {
+    ipcMain.handle(channel, async (_event, ...args) => { const result = await profiles[method](...args); updateMenu(); return result; });
+  }
   ipcMain.handle('git-status', () => gitAvailable);
   ipcMain.handle('restore-session', () => ({ repositories: restored, activeIndex: restoredActive }));
   ipcMain.handle('save-session', (_event, paths, activeIndex) => {
@@ -50,6 +64,7 @@ app.whenReady().then(async () => {
     session.save(paths, activeIndex);
   });
   ipcMain.handle('open-repository', async () => {
+    requireProfile();
     const result = await dialog.showOpenDialog(window, { title: 'Open Git repository', properties: ['openDirectory'] });
     if (result.canceled || !result.filePaths.length) return null;
     const data = await repository.openRepository(result.filePaths[0]);
@@ -57,22 +72,25 @@ app.whenReady().then(async () => {
     return data;
   });
   ipcMain.handle('create-repository', async (_event, input) => {
+    requireProfile();
     if (!gitAvailable) throw new Error('Git is required to create a repository.');
     const data = await repository.createRepository(input);
     opened.add(data.path);
     return data;
   });
   ipcMain.handle('choose-parent-directory', async () => {
+    requireProfile();
     const result = await dialog.showOpenDialog(window, { title: 'Choose parent directory', properties: ['openDirectory'] });
     return result.canceled ? null : result.filePaths[0] ?? null;
   });
   for (const [channel, method] of [['repository-snapshot', 'snapshot'], ['commit-details', 'commitDetails'], ['file-diff', 'diff'], ['more-commits', 'commits']]) {
     ipcMain.handle(channel, async (_event, root, argument) => {
       if (!opened.has(root)) throw new Error('Open this repository first.');
+      requireProfile();
       return repository[method](root, argument);
     });
   }
-  ipcMain.on('tab-active', (_event, active) => { closeTabItem.enabled = gitAvailable && active === true; });
+  ipcMain.on('tab-active', (_event, active) => { tabActive = active === true; updateMenu(); });
   window = new BrowserWindow({ width: 1200, height: 800, minWidth: 680, minHeight: 440, title: 'GitForge', backgroundColor: '#1e2025', webPreferences: {
     preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true
   } });

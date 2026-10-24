@@ -24,6 +24,13 @@ branch. GitForge creates a new child folder with README.md and a starter
 .gitignore, leaving both files uncommitted. Existing destination folders are
 never overwritten. Creation errors remain visible in the initialization form.
 
+Phase 4 adds profiles under Preferences → Profiles. A profile is required to
+use the application. Profiles support creation, editing, switching, and confirmed
+deletion. PATs are encrypted with Electron safeStorage (Windows DPAPI) before
+being saved in SQLite; profile lists never include tokens. Leaving the PAT blank
+when editing preserves it. Deleting the active profile selects the first remaining
+profile alphabetically; deleting the last returns to required profile setup.
+
 ## Run
 
 ```powershell

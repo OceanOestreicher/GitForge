@@ -11,13 +11,13 @@ test('tabs and preferences preserve the active workspace', async () => {
     await page.getByRole('button', { name: 'New Tab', exact: true }).click();
     await expect(page.getByRole('tab')).toHaveCount(2);
     await page.getByRole('button', { name: 'Preferences', exact: true }).click();
-    await expect(page.getByRole('heading', { name: 'General', exact: true })).toBeVisible();
-    await page.getByRole('button', { name: 'Profiles', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Profiles', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'General', exact: true })).toHaveCount(0);
     await expect(page.getByRole('heading', { name: 'Profiles', exact: true })).toBeVisible();
     await page.getByRole('button', { name: 'Exit Preferences' }).click();
     await expect(page.getByRole('tab').nth(1)).toHaveAttribute('aria-selected', 'true');
     await page.getByRole('button', { name: 'Preferences', exact: true }).click();
-    await expect(page.getByRole('heading', { name: 'General', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Profiles', exact: true })).toBeVisible();
     await page.getByRole('button', { name: 'Preferences', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Repositories' })).toBeVisible();
     await expect(page.getByRole('tab').nth(1)).toHaveAttribute('aria-selected', 'true');

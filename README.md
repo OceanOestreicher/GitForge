@@ -68,5 +68,3 @@ Open repository paths are stored in SQLite in the application user-data director
 On launch, GitForge reopens those repositories using fresh Git data and skips
 repositories that are missing or no longer accessible. Closed repositories are
 removed from the saved session.
-
-test

@@ -2,6 +2,7 @@ const { app, BrowserWindow, Menu, ipcMain, dialog, safeStorage, net } = require(
 const { verifyGitHub } = require('./github.cjs');
 const { createProfileStore } = require('./profiles.cjs');
 const { cloneRepository } = require('./clone.cjs');
+const pushing = require('./push.cjs');
 const repository = require('./repository.cjs');
 const opened = new Set();
 const { execFile } = require('node:child_process');
@@ -20,6 +21,14 @@ app.whenReady().then(async () => {
   const dataDirectory = app.commandLine.getSwitchValue('user-data-dir') || app.getPath('userData');
   const session = createSessionStore(dataDirectory);
   const profiles = createProfileStore(dataDirectory, safeStorage, (username, pat) => verifyGitHub(username, pat, (...args) => net.fetch(...args)));
+  const activeProfile = () => { const profile = profiles.list().find(profile => profile.active); if (!profile) throw new Error('Select an active profile first.'); return profile; };
+  const operations = new Set();
+  const mutate = async (root, work) => {
+    requireProfile();
+    if (!opened.has(root)) throw new Error('Open this repository first.');
+    if (operations.has(root)) throw new Error('A repository operation is already in progress.');
+    operations.add(root); try { return await work(); } finally { operations.delete(root); }
+  };
   const requireProfile = () => { if (!profiles.list().length) throw new Error('Create a profile before using repositories.'); };
   gitAvailable = await checkGit();
   const restored = [];
@@ -91,6 +100,10 @@ app.whenReady().then(async () => {
       return data;
     } finally { cloning = false; }
   });
+  ipcMain.handle('change-files', (_event, root, input) => mutate(root, () => repository.changeFiles(root, input)));
+  ipcMain.handle('commit-changes', (_event, root, input) => mutate(root, () => repository.commit(root, input, activeProfile())));
+  ipcMain.handle('prepare-push', (_event, root) => mutate(root, () => pushing.destination(root, profiles.credentials())));
+  ipcMain.handle('push-commits', (_event, root, input) => mutate(root, () => pushing.push(root, input, profiles.credentials(), (...args) => net.fetch(...args))));
   ipcMain.handle('choose-parent-directory', async () => {
     requireProfile();
     const result = await dialog.showOpenDialog(window, { title: 'Choose parent directory', properties: ['openDirectory'] });

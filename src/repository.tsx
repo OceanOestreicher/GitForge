@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { parseDiff } from './diff';
+import { PushDialog, type PushPlan } from './push';
 
 export type FileChange = { path: string; status: string; untracked?: boolean; oldPath?: string };
 export type Commit = { hash: string; parents: string[]; author: string; date: string; subject: string; refs: string };
-export type Repository = { path: string; name: string; branch: string; local: string[]; remote: string[]; stashes: string[]; staged: FileChange[]; unstaged: FileChange[]; commits: Commit[] };
+export type Repository = { path: string; name: string; branch: string; local: string[]; remote: string[]; ahead: Record<string, number>; unpushed: number; stashes: string[]; staged: FileChange[]; unstaged: FileChange[]; commits: Commit[] };
 type Selection = { file: FileChange; staged?: boolean; hash?: string };
 
-function FileList({ files, tree, select, selectedPath }: { files: FileChange[]; tree: boolean; select: (file: FileChange) => void; selectedPath?: string }) {
+function FileList({ files, tree, select, selectedPath, markedPaths = [], doubleClick, discard }: { files: FileChange[]; tree: boolean; select: (file: FileChange, event: React.MouseEvent<HTMLButtonElement>) => void; selectedPath?: string; markedPaths?: string[]; doubleClick?: (file: FileChange) => void; discard?: () => void }) {
   const list = useRef<HTMLDivElement>(null);
   const pointer = useRef<{ x: number; y: number } | null>(null);
   const [hoveredPath, setHoveredPath] = useState<string | null>(null);
@@ -44,13 +45,13 @@ function FileList({ files, tree, select, selectedPath }: { files: FileChange[]; 
       if (slash < 0) leaves.push(file);
       else { const folder = relative.slice(0, slash); groups.set(folder, [...(groups.get(folder) ?? []), file]); }
     }
-    return <>{[...groups].sort(([a], [b]) => a.localeCompare(b)).map(([folder, children]) => <details open key={folder}><summary>{folder}</summary><div className="tree-children">{render(children, prefix + folder + '/')}</div></details>)}{leaves.map(file => <button className={`file-row${hoveredPath === file.path ? " file-hovered" : ""}`} data-file-path={file.path} aria-pressed={file.path === selectedPath} key={file.path} title={file.path} onClick={() => select(file)}><span className={`status status-${file.status}`}>{file.untracked ? '+' : file.status}</span>{file.path.slice(prefix.length)}</button>)}</>;
+    return <>{[...groups].sort(([a], [b]) => a.localeCompare(b)).map(([folder, children]) => <details open key={folder}><summary>{folder}</summary><div className="tree-children">{render(children, prefix + folder + '/')}</div></details>)}{leaves.map(file => <button className={`file-row${hoveredPath === file.path ? " file-hovered" : ""}`} data-file-path={file.path} aria-pressed={file.path === selectedPath || markedPaths.includes(file.path)} key={file.path} title={file.path} onClick={event => select(file, event)} onDoubleClick={() => doubleClick?.(file)}><span className={`status status-${file.status}`}>{file.untracked ? '+' : file.status}</span>{file.path.slice(prefix.length)}</button>)}</>;
   };
   if (!files.length) return <p className="muted small">No files</p>;
-  return <div className="file-list" ref={list}>{tree ? render(files) : files.map(file => <button className={`file-row${hoveredPath === file.path ? " file-hovered" : ""}`} data-file-path={file.path} aria-pressed={file.path === selectedPath} title={file.oldPath ? `${file.oldPath} → ${file.path}` : file.path} key={file.path} onClick={() => select(file)}><span className={`status status-${file.status}`}>{file.untracked ? '+' : file.status}</span>{file.path}</button>)}</div>;
+  return <div className="file-list" ref={list} onKeyDown={event => { if (event.key === 'Delete' && discard) { event.preventDefault(); discard(); } }}>{tree ? render(files) : files.map(file => <button className={`file-row${hoveredPath === file.path ? " file-hovered" : ""}`} data-file-path={file.path} aria-pressed={file.path === selectedPath || markedPaths.includes(file.path)} title={file.oldPath ? `${file.oldPath} → ${file.path}` : file.path} key={file.path} onClick={event => select(file, event)} onDoubleClick={() => doubleClick?.(file)}><span className={`status status-${file.status}`}>{file.untracked ? '+' : file.status}</span>{file.path}</button>)}</div>;
 }
 
-export function RepositoryView({ initial }: { initial: Repository }) {
+export function RepositoryView({ initial, updated }: { initial: Repository; updated: (repo: Repository) => void }) {
   const [repo, setRepo] = useState(initial);
   const [selected, setSelected] = useState<Commit | null>(null);
   const [details, setDetails] = useState<{ message: string; files: FileChange[] } | null>(null);
@@ -63,6 +64,42 @@ export function RepositoryView({ initial }: { initial: Repository }) {
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(initial.commits.length === 200);
   const [context, setContext] = useState<{ x: number; y: number } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [picked, setPicked] = useState<{ staged: boolean; paths: string[]; anchor?: string }>({ staged: false, paths: [] });
+  const [pushMenu, setPushMenu] = useState(false);
+  const [pushDialog, setPushDialog] = useState<{ plan: PushPlan; force: boolean } | null>(null);
+  const accept = (value: Repository) => { setRepo(value); updated(value); setSelection(null); setPicked({ staged: false, paths: [] }); };
+  const message = (error: unknown) => error instanceof Error ? error.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '') : String(error);
+  const change = async (action: string, paths = picked.paths) => {
+    if (busy || !paths.length) return;
+    setBusy(true); setError('');
+    try { accept(await window.gitforge.changeFiles(repo.path, { action, paths })); }
+    catch (error) { setError(message(error)); } finally { setBusy(false); }
+  };
+  const chooseFile = (file: FileChange, staged: boolean, event: React.MouseEvent<HTMLButtonElement>) => {
+    if (busy) return;
+    if (event.ctrlKey || event.metaKey || event.shiftKey) {
+      let paths = picked.staged === staged ? [...picked.paths] : [];
+      if (event.shiftKey && picked.staged === staged && picked.anchor) {
+        const order = Array.from(event.currentTarget.closest('.file-list')!.querySelectorAll<HTMLElement>('.file-row')).map(row => row.dataset.filePath!);
+        const a = order.indexOf(picked.anchor), b = order.indexOf(file.path);
+        paths = a >= 0 ? order.slice(Math.min(a, b), Math.max(a, b) + 1) : [file.path];
+      } else paths = paths.includes(file.path) ? paths.filter(path => path !== file.path) : [...paths, file.path];
+      setPicked({ staged, paths, anchor: picked.anchor ?? file.path }); setSelection(null);
+    } else {
+      const closing = selection?.file.path === file.path && Boolean(selection.staged) === staged && !selection.hash;
+      setPicked({ staged, paths: closing ? [] : [file.path], anchor: file.path });
+      toggleFile({ file, staged });
+    }
+  };
+  const startPush = async (force: boolean) => {
+    if (busy || !repo.unpushed) return; setBusy(true); setError(''); setPushMenu(false);
+    try {
+      const plan = await window.gitforge.preparePush(repo.path);
+      if (force || plan.needsBranch || plan.needsRepository) setPushDialog({ plan, force });
+      else accept(await window.gitforge.pushCommits(repo.path, { force: false }));
+    } catch(error) { setError(message(error)); } finally { setBusy(false); }
+  };
   const requestId = useRef(0);
   const toggleFile = (next: Selection) => {
     setSelection(previous => previous?.file.path === next.file.path
@@ -90,16 +127,16 @@ export function RepositoryView({ initial }: { initial: Repository }) {
     return () => { window.removeEventListener('click', close); window.removeEventListener('keydown', key); };
   }, []);
   return <div className="repository">
-    <header className="repo-actions"><div className="repo-name" title={repo.path}><strong>{repo.name}</strong><span>{repo.branch}</span></div><div className="repo-buttons">{['Pull', 'Push', 'Branch', 'Fetch'].map(action => <button key={action}>{action}</button>)}</div></header>
+    <header className="repo-actions"><div className="repo-name" title={repo.path}><strong>{repo.name}</strong><span>{repo.branch}</span></div><div className="repo-buttons"><button>Pull</button><div className="push-control"><button disabled={busy || !repo.unpushed} onClick={() => void startPush(false)}>Push</button><button disabled={busy || !repo.unpushed} aria-label="Push options" onClick={() => setPushMenu(value => !value)}>&#9662;</button>{pushMenu && <div className="profile-menu"><button onClick={() => void startPush(true)}>Force Push</button></div>}</div><button>Branch</button><button>Fetch</button></div></header>
     {error && <div className="error" role="alert">{error}<button onClick={() => setError('')}>Dismiss</button></div>}
     <div className="repo-layout">
       <aside className="repo-sidebar">
-        <details className="sidebar-group" open><summary>Local branches</summary><div className="sidebar-items">{repo.local.map(branch => <div className={branch === repo.branch ? 'current-branch' : ''} key={branch}>{branch === repo.branch ? '\u25CF ' : ''}{branch}</div>)}{!repo.local.length && <p className="muted">No local branches</p>}</div></details>
+        <details className="sidebar-group" open><summary>Local branches</summary><div className="sidebar-items">{repo.local.map(branch => <div className={branch === repo.branch ? 'current-branch' : ''} key={branch}>{branch === repo.branch ? '\u25CF ' : ''}{branch}{repo.ahead[branch] > 0 && <span className="ahead-count" aria-label={`${repo.ahead[branch]} commits to push`}> {repo.ahead[branch]} <span aria-hidden="true">&#8593;</span></span>}</div>)}{!repo.local.length && <p className="muted">No local branches</p>}</div></details>
         <details className="sidebar-group"><summary>Remote branches</summary><div className="sidebar-items">{repo.remote.map(branch => <div key={branch}>{branch}</div>)}{!repo.remote.length && <p className="muted">No remote branches</p>}</div></details>
         <details className="sidebar-group"><summary>Stashes</summary><div className="sidebar-items">{repo.stashes.map(stash => <div key={stash}>{stash}</div>)}{!repo.stashes.length && <p className="muted">No stashes</p>}</div></details>
       </aside>
       <main className="repo-center"><section className="history" hidden={selection !== null}><div className="section-heading"><h2>Commit history</h2></div>
-        <table><thead><tr><th>Commit</th><th>Author</th><th>Date</th></tr></thead><tbody><tr className={selected === null ? 'selected wip-row' : 'wip-row'}><td colSpan={3}><button className="commit-link wip-link" onClick={() => { setSelected(null); setSelection(null); }}><span className="wip-marker" aria-hidden="true"/>WIP <span className="muted">{new Set([...repo.unstaged, ...repo.staged].map(file => file.path)).size} files changed</span></button></td></tr>{repo.commits.map(commit => <tr key={commit.hash} className={selected?.hash === commit.hash ? 'selected' : ''} onContextMenu={event => { event.preventDefault(); setContext({ x: Math.min(event.clientX, window.innerWidth - 250), y: Math.min(event.clientY, window.innerHeight - 130) }); }}><td><button className="commit-link" onClick={() => { setSelected(commit); setSelection(null); }}><code>{commit.hash.slice(0, 7)}</code> {commit.subject}{commit.refs && <span className="refs">{commit.refs}</span>}</button></td><td>{commit.author}</td><td>{new Date(commit.date).toLocaleDateString()}</td></tr>)}</tbody></table>
+        <table><thead><tr><th>Commit</th><th>Author</th><th>Date</th></tr></thead><tbody><tr className={selected === null ? 'selected wip-row' : 'wip-row'}><td colSpan={3}><button className="commit-link wip-link" onClick={() => { setSelected(null); setSelection(null); setPicked({ staged: false, paths: [] }); }}><span className="wip-marker" aria-hidden="true"/>WIP <span className="muted">{new Set([...repo.unstaged, ...repo.staged].map(file => file.path)).size} files changed</span></button></td></tr>{repo.commits.map(commit => <tr key={commit.hash} className={selected?.hash === commit.hash ? 'selected' : ''} onContextMenu={event => { event.preventDefault(); setContext({ x: Math.min(event.clientX, window.innerWidth - 250), y: Math.min(event.clientY, window.innerHeight - 130) }); }}><td><button className="commit-link" onClick={() => { setSelected(commit); setSelection(null); setPicked({ staged: false, paths: [] }); }}><code>{commit.hash.slice(0, 7)}</code> {commit.subject}{commit.refs && <span className="refs">{commit.refs}</span>}</button></td><td>{commit.author}</td><td>{new Date(commit.date).toLocaleDateString()}</td></tr>)}</tbody></table>
         {!repo.commits.length && <p className="muted">This repository has no commits yet.</p>}
         {hasMore && <button disabled={loadingMore} onClick={async () => { setLoadingMore(true); try { const more = await window.gitforge.moreCommits(repo.path, repo.commits.length); setRepo(previous => ({ ...previous, commits: [...previous.commits, ...more] })); setHasMore(more.length === 200); } catch(e) { setError(String(e)); } finally { setLoadingMore(false); } }}>Load more commits</button>}
       </section>
@@ -110,10 +147,11 @@ export function RepositoryView({ initial }: { initial: Repository }) {
       {selected ? <section className="commit-information"><div className="section-heading"><h2>Commit information</h2><button aria-pressed={tree} onClick={() => setTree(value => !value)}>{tree ? 'Path view' : 'Tree view'}</button></div>
         <><dl className="commit-metadata"><dt>Hash</dt><dd>{selected.hash}</dd><dt>Parents</dt><dd>{selected.parents.join(', ') || 'None (initial commit)'}</dd><dt>Author</dt><dd>{selected.author}</dd><dt>Date</dt><dd>{new Date(selected.date).toLocaleString()}</dd></dl>{details ? <><pre className="commit-message">{details.message}</pre><p className="summary-counts">{details.files.filter(f => f.status === 'A').length} added · {details.files.filter(f => f.status === 'M').length} changed · {details.files.filter(f => f.status === 'D').length} deleted</p><FileList files={details.files} tree={tree} selectedPath={selection?.hash === selected.hash ? selection.file.path : undefined} select={file => toggleFile({ file, hash: selected.hash })}/></> : <p>Loading commit…</p>}</>
       </section> : 
-      <section className="working-changes"><div className="section-heading"><h2>Working changes</h2><button aria-pressed={tree} onClick={() => setTree(value => !value)}>{tree ? 'Path view' : 'Tree view'}</button></div><section className="change-group"><h3>Unstaged files ({repo.unstaged.length})</h3><div className="change-scroll" role="region" aria-label="Unstaged files" tabIndex={0}><FileList files={repo.unstaged} tree={tree} selectedPath={selection && !selection.hash && !selection.staged ? selection.file.path : undefined} select={file => { setSelected(null); toggleFile({ file }); }}/></div></section><section className="change-group"><h3>Staged files ({repo.staged.length})</h3><div className="change-scroll" role="region" aria-label="Staged files" tabIndex={0}><FileList files={repo.staged} tree={tree} selectedPath={selection && !selection.hash && selection.staged ? selection.file.path : undefined} select={file => { setSelected(null); toggleFile({ file, staged: true }); }}/></div></section><div className="commit-form"><label>Commit title<input value={title} onChange={event => setTitle(event.target.value)} placeholder="Commit title"/></label><label>Description<textarea value={description} onChange={event => setDescription(event.target.value)} placeholder="Description (optional)"/></label><button>Commit</button></div></section> }
+      <section className="working-changes"><div className="section-heading"><h2>Working changes</h2><button aria-pressed={tree} onClick={() => setTree(value => !value)}>{tree ? 'Path view' : 'Tree view'}</button></div><section className="change-group"><div className="change-heading"><h3>Unstaged files ({repo.unstaged.length})</h3><button disabled={busy || !repo.unstaged.length} onClick={() => void change('stage', repo.unstaged.map(file => file.path))}>Stage All</button></div><div className="change-scroll" role="region" aria-label="Unstaged files" tabIndex={0}><FileList files={repo.unstaged} tree={tree} selectedPath={selection && !selection.hash && !selection.staged ? selection.file.path : undefined} markedPaths={!picked.staged ? picked.paths : []} select={(file, event) => { setSelected(null); chooseFile(file, false, event); }} doubleClick={file => void change('stage', !picked.staged && picked.paths.includes(file.path) ? picked.paths : [file.path])} discard={() => { if (!picked.staged) void change('discard'); }}/></div></section><section className="change-group"><div className="change-heading"><h3>Staged files ({repo.staged.length})</h3><button disabled={busy || !repo.staged.length} onClick={() => void change('unstage', repo.staged.map(file => file.path))}>Unstage All</button></div><div className="change-scroll" role="region" aria-label="Staged files" tabIndex={0}><FileList files={repo.staged} tree={tree} selectedPath={selection && !selection.hash && selection.staged ? selection.file.path : undefined} markedPaths={picked.staged ? picked.paths : []} select={(file, event) => { setSelected(null); chooseFile(file, true, event); }} doubleClick={file => void change('unstage', picked.staged && picked.paths.includes(file.path) ? picked.paths : [file.path])}/></div></section><div className="commit-form"><label>Commit title<input value={title} onChange={event => setTitle(event.target.value)} placeholder="Commit title"/></label><label>Description<textarea value={description} onChange={event => setDescription(event.target.value)} placeholder="Description (optional)"/></label><button disabled={busy || !repo.staged.length || !title.trim()} onClick={async () => { if (busy) return; setBusy(true); setError(''); try { accept(await window.gitforge.commitChanges(repo.path, { title, description })); setTitle(''); setDescription(''); } catch(error) { setError(message(error)); } finally { setBusy(false); } }}>Commit</button></div></section> }
 
 
     </div>
+    {pushDialog && <PushDialog plan={pushDialog.plan} force={pushDialog.force} close={() => setPushDialog(null)} pushed={async input => { const value = await window.gitforge.pushCommits(repo.path, input); accept(value); setPushDialog(null); }}/ >}
     {context && <div role="menu" className="context-menu" style={{ left: context.x, top: context.y }}>{['Checkout Commit', 'Reset Branch To Commit', 'Create Branch From Commit'].map(action => <button role="menuitem" key={action} onClick={() => setContext(null)}>{action}</button>)}</div>}
   </div>;
 }

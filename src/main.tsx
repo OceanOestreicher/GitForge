@@ -5,6 +5,7 @@ import { RepositoryView, type Repository, type Commit, type FileChange } from '.
 import { CreateRepository } from './create-repository';
 import { CloneRepository } from './clone-repository';
 import { ProfilesPage, type Profile, type ProfileInput } from './profiles';
+import type { PushPlan, PushInput } from './push';
 
 declare global {
   interface Window {
@@ -20,6 +21,10 @@ declare global {
       openRepository(): Promise<Repository | null>;
       createRepository(input: { name: string; parentPath: string; branch: string }): Promise<Repository>;
       cloneRepository(input: { url: string; parentPath: string }): Promise<Repository>;
+      changeFiles(root: string, input: { action: string; paths: string[] }): Promise<Repository>;
+      commitChanges(root: string, input: { title: string; description: string }): Promise<Repository>;
+      preparePush(root: string): Promise<PushPlan>;
+      pushCommits(root: string, input: PushInput): Promise<Repository>;
       chooseParentDirectory(): Promise<string | null>;
       snapshot(root: string): Promise<Repository>;
       commitDetails(root: string, hash: string): Promise<{ message: string; files: FileChange[] }>;
@@ -134,7 +139,7 @@ function App() {
       {overflowing && <button className="icon scroll" aria-label="Scroll tabs left" onClick={() => tabStrip.current?.scrollBy({ left: -240, behavior: 'smooth' })}>‹</button>}
       <div className="tabs" ref={tabStrip} role="tablist" aria-label="Repository tabs">
         {tabs.map(id => <div className={`tab ${active === id ? 'active' : ''}`} key={id}>
-          <button role="tab" aria-selected={active === id} onClick={() => { setActive(id); setPreferences(false); }}>{repositories[id]?.name ?? 'New Tab'}</button>
+          <button role="tab" aria-selected={active === id} onClick={() => { setActive(id); setPreferences(false); }}>{Boolean(repositories[id]?.unpushed) && <span className="unpushed-dot" aria-label="Unpushed commits"/>}{repositories[id]?.name ?? 'New Tab'}</button>
           <button className="close" aria-label={`Close tab ${id}`} onClick={() => closeTab(id)}>×</button>
         </div>)}
       </div>
@@ -150,7 +155,7 @@ function App() {
       <aside><button className="back" disabled={profileRequired} onClick={() => setPreferences(false)}>← Exit Preferences</button>
         <nav aria-label="Preferences pages"><button aria-current="page" className="selected">Profiles</button></nav>
       </aside><main className="preference-page"><ProfilesPage profiles={profiles} updated={values => { setProfiles(values); setPreferences(true); }}/></main>
-    </div> : active !== null && repositories[active] ? <RepositoryView key={active} initial={repositories[active]}/> : active !== null ? <main className="welcome"><h1>Repositories</h1><div className="actions">
+    </div> : active !== null && repositories[active] ? <RepositoryView key={active} initial={repositories[active]} updated={repo => setRepositories(previous => ({ ...previous, [active]: repo }))}/> : active !== null ? <main className="welcome"><h1>Repositories</h1><div className="actions">
       <button disabled={opening} onClick={() => void openRepository(false)}><span aria-hidden="true">▰</span> Open</button>
       <button onClick={() => setCloneTarget({ tab: active })}><span aria-hidden="true">↓</span> Clone</button>
       <button onClick={() => setCreateTarget({ tab: active })}><span aria-hidden="true">⊞</span> Create</button>

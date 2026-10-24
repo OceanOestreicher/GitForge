@@ -38,7 +38,12 @@ async function snapshot(root) {
       if (y !== ' ') unstaged.push({ path: file, oldPath, status: y });
     }
   }
-  return { path: root, name: path.basename(root), branch: branch.trim(), local, remote, stashes: stash.trim().split('\n').filter(Boolean), staged, unstaged, commits: history };
+  const ahead = {};
+  await Promise.all(local.map(async name => {
+    const upstream = (await git(root, ['for-each-ref', '--format=%(upstream)', `refs/heads/${name}`])).trim();
+    ahead[name] = Number((await git(root, ['rev-list', '--count', `refs/heads/${name}`, ...(upstream ? ['--not', upstream] : ['--not', '--remotes'])]).catch(() => '0')).trim());
+  }));
+  return { path: root, name: path.basename(root), branch: branch.trim(), local, remote, ahead, unpushed: ahead[branch.trim()] || 0, stashes: stash.trim().split('\n').filter(Boolean), staged, unstaged, commits: history };
 }
 async function openRepository(folder) {
   if ((await git(folder, ['rev-parse', '--is-bare-repository'])).trim() === 'true') throw new Error('Bare repositories are not supported. Choose a repository working folder.');
@@ -104,4 +109,34 @@ async function createRepository(input) {
     throw new Error(`Repository creation failed: ${error.message}. Check ${destination} before trying again.`);
   }
 }
-module.exports = { openRepository, snapshot, commitDetails, diff, commits, createRepository };
+async function changeFiles(root, input) {
+  if (!input || !['stage', 'unstage', 'discard'].includes(input.action) || !Array.isArray(input.paths) || !input.paths.length || !input.paths.every(file => typeof file === 'string')) throw new Error('Select files first.');
+  const state = await snapshot(root);
+  const candidates = input.action === 'unstage' ? state.staged : state.unstaged;
+  const files = [...new Set(input.paths)].map(file => { const change = candidates.find(change => change.path === file); if (!change) throw new Error('File state changed. Reopen the repository and select the files again.'); return change; });
+  const paths = [...new Set(files.flatMap(file => file.oldPath ? [file.path, file.oldPath] : [file.path]))];
+  if (input.action === 'stage') await git(root, ['add', '-A', '--', ...paths]);
+  else if (input.action === 'unstage') {
+    const hasHead = await git(root, ['rev-parse', '--verify', 'HEAD']).catch(() => '');
+    await git(root, hasHead ? ['reset', 'HEAD', '--', ...paths] : ['update-index', '--force-remove', '--', ...paths]);
+  } else {
+    const tracked = files.filter(file => !file.untracked).map(file => file.path);
+    if (tracked.length) await git(root, ['restore', '--worktree', '--', ...tracked]);
+    for (const file of files.filter(file => file.untracked)) {
+      const absolute = path.resolve(root, file.path);
+      if (!absolute.startsWith(root + path.sep)) throw new Error('Invalid file path.');
+      await fs.unlink(absolute);
+    }
+  }
+  return snapshot(root);
+}
+async function commit(root, input, profile) {
+  if (!input || typeof input.title !== 'string' || !input.title.trim() || typeof input.description !== 'string') throw new Error('Enter a commit title.');
+  if (!(await snapshot(root)).staged.length) throw new Error('Stage at least one file before committing.');
+  await new Promise((resolve, reject) => execFile('git', ['-c', `user.name=${profile.username}`, '-c', `user.email=${profile.email}`, 'commit', '-m', input.title.trim(), ...(input.description.trim() ? ['-m', input.description.trim()] : [])], {
+    cwd: root, windowsHide: true, timeout: 30000, maxBuffer: 8 * 1024 * 1024,
+    env: { ...process.env, GIT_AUTHOR_NAME: profile.username, GIT_AUTHOR_EMAIL: profile.email, GIT_COMMITTER_NAME: profile.username, GIT_COMMITTER_EMAIL: profile.email, GIT_TERMINAL_PROMPT: '0' }
+  }, (error, _stdout, stderr) => error ? reject(new Error(stderr.trim() || 'Commit failed. Check Git configuration and commit hooks.')) : resolve()));
+  return snapshot(root);
+}
+module.exports = { git, openRepository, snapshot, commitDetails, diff, commits, createRepository, changeFiles, commit };

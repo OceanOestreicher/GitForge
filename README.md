@@ -12,9 +12,9 @@ A Windows desktop Git client built with Electron, React, and TypeScript.
 Phase 2 adds opening local repositories, local/remote branches and stashes,
 paged commit history, commit metadata, and staged/unstaged file diffs with
 path and tree views. Use File → Open Repo to open a repository in a new tab,
-or Open on a new tab to use that tab. Periodic repository refresh is planned for Phase 8.
+or Open on a new tab to use that tab. Periodic repository refresh is planned for Phase 7.
 
-Pull, Push, Branch, Fetch, Commit, and commit context-menu actions remain
+Pull, Branch, Fetch, and commit context-menu actions remain
 placeholders for later phases. Opening and inspecting repositories does not
 stage files, change branches, create commits, or contact remotes.
 
@@ -36,6 +36,15 @@ clone URL and type or browse for an existing parent directory. The clone is
 created at `parent/repository-name` using the active profile credentials.
 Existing destinations are never overwritten. Errors keep the form open for
 correction and retry; credentials are not stored in the remote URL or Git config.
+
+Phase 6 adds file staging and unstaging (double-click, or select with Ctrl/Shift
+and use Stage/Unstage), discarding selected unstaged changes with Delete, and
+commits authored with the active profile username and email. Discarding tracked
+changes restores the staged version; discarding untracked files deletes them.
+Unpushed commit counts appear beside branches and a dot marks repository tabs.
+Push publishes commits; the adjacent options menu offers confirmed Force Push.
+Missing remote branches and GitHub repositories require confirmation before
+creation. Repository visibility is explicitly selected when creating a remote.
 
 ## Run
 

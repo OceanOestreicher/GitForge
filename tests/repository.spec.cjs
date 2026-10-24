@@ -159,8 +159,8 @@ test('open repository, inspect history and working diffs without changing Git st
     await expect(page.locator('.wip-row')).toHaveClass(/selected/);
     await page.keyboard.press('Escape');
     await page.getByLabel('Commit title', { exact: true }).fill('Draft only');
-    await page.locator('.commit-form').getByRole('button', { name: 'Commit', exact: true }).click();
-    for (const name of ['Pull', 'Push', 'Branch', 'Fetch']) await page.locator('.repo-buttons').getByRole('button', { name, exact: true }).click();
+    await expect(page.locator('.commit-form').getByRole('button', { name: 'Commit', exact: true })).toBeEnabled();
+    for (const name of ['Pull', 'Branch', 'Fetch']) await page.locator('.repo-buttons').getByRole('button', { name, exact: true }).click();
     await page.screenshot({ path: 'test-results/repository.png' });
     expect(git('status', '--porcelain')).toBe(before); expect(git('rev-parse', 'HEAD')).toBe(first);
   } finally { await app.close(); }

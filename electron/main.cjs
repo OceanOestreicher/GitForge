@@ -36,7 +36,7 @@ app.whenReady().then(async () => {
     { id: 'close-tab', label: 'Close Tab', accelerator: 'CmdOrCtrl+W', enabled: false, click: () => send('close-tab') },
     { type: 'separator' },
     { label: 'Clone Repo', enabled: gitAvailable, click() {} },
-    { label: 'Init Repo', enabled: gitAvailable, click() {} },
+    { label: 'Init Repo', enabled: gitAvailable, click: () => send('init-repo') },
     { label: 'Open Repo', accelerator: 'CmdOrCtrl+O', enabled: gitAvailable, click: () => send('open-repo') },
     { type: 'separator' },
     { label: 'Exit', click: () => app.quit() }
@@ -55,6 +55,16 @@ app.whenReady().then(async () => {
     const data = await repository.openRepository(result.filePaths[0]);
     opened.add(data.path);
     return data;
+  });
+  ipcMain.handle('create-repository', async (_event, input) => {
+    if (!gitAvailable) throw new Error('Git is required to create a repository.');
+    const data = await repository.createRepository(input);
+    opened.add(data.path);
+    return data;
+  });
+  ipcMain.handle('choose-parent-directory', async () => {
+    const result = await dialog.showOpenDialog(window, { title: 'Choose parent directory', properties: ['openDirectory'] });
+    return result.canceled ? null : result.filePaths[0] ?? null;
   });
   for (const [channel, method] of [['repository-snapshot', 'snapshot'], ['commit-details', 'commitDetails'], ['file-diff', 'diff'], ['more-commits', 'commits']]) {
     ipcMain.handle(channel, async (_event, root, argument) => {

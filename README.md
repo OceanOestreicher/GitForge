@@ -18,6 +18,12 @@ Pull, Push, Branch, Fetch, Commit, and commit context-menu actions remain
 placeholders for later phases. Opening and inspecting repositories does not
 stage files, change branches, create commits, or contact remotes.
 
+Phase 3 adds local repository initialization through Create or File → Init Repo.
+Enter a repository name, an existing absolute parent directory, and a default
+branch. GitForge creates a new child folder with README.md and a starter
+.gitignore, leaving both files uncommitted. Existing destination folders are
+never overwritten. Creation errors remain visible in the initialization form.
+
 ## Run
 
 ```powershell

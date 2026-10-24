@@ -78,4 +78,30 @@ async function diff(root, request) {
   }
   return git(root, ['diff', ...(request.staged ? ['--cached'] : []), '--no-ext-diff', '--no-textconv', '--', request.path]);
 }
-module.exports = { openRepository, snapshot, commitDetails, diff, commits };
+async function createRepository(input) {
+  if (!input || typeof input.name !== 'string' || typeof input.parentPath !== 'string' || typeof input.branch !== 'string') throw new Error('Enter a repository name, parent directory, and default branch.');
+  const name = input.name.trim(), parent = input.parentPath.trim(), branch = input.branch.trim();
+  if (!name || /[<>:"/\\|?*\x00-\x1f]/.test(name) || /[. ]$/.test(name) || /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(name) || name === '.' || name === '..' || name.toLowerCase() === '.git') throw new Error('Enter a valid Windows folder name for the repository.');
+  if (!path.isAbsolute(parent)) throw new Error('Enter an absolute parent directory path.');
+  const parentInfo = await fs.stat(parent).catch(() => { throw new Error('The parent directory does not exist or cannot be accessed.'); });
+  if (!parentInfo.isDirectory()) throw new Error('The parent path must be a directory.');
+  if (!branch || branch.startsWith('-')) throw new Error('Enter a valid default branch name.');
+  await git(parent, ['check-ref-format', `refs/heads/${branch}`]).catch(() => { throw new Error('The default branch name is invalid.'); });
+  const destination = path.join(path.resolve(parent), name);
+  // mkdir without recursive creation reserves a new destination without modifying
+  // an existing directory, including an existing repository.
+  try { await fs.mkdir(destination); }
+  catch (error) {
+    if (error.code === 'EEXIST') throw new Error('A folder with this repository name already exists. Choose a different name or parent directory.');
+    throw new Error(`Cannot create repository folder: ${error.message}`);
+  }
+  try {
+    await git(destination, ['init', `--initial-branch=${branch}`]);
+    await fs.writeFile(path.join(destination, 'README.md'), `# ${name}\n`, { flag: 'wx' });
+    await fs.writeFile(path.join(destination, '.gitignore'), '# Add file patterns to ignore below.\n', { flag: 'wx' });
+    return await openRepository(destination);
+  } catch (error) {
+    throw new Error(`Repository creation failed: ${error.message}. Check ${destination} before trying again.`);
+  }
+}
+module.exports = { openRepository, snapshot, commitDetails, diff, commits, createRepository };

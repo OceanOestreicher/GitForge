@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './style.css';
 import { RepositoryView, type Repository, type Commit, type FileChange } from './repository';
+import { CreateRepository } from './create-repository';
 
 declare global {
   interface Window {
@@ -10,6 +11,8 @@ declare global {
       restoreSession(): Promise<{ repositories: Repository[]; activeIndex: number }>;
       saveSession(paths: string[], activeIndex: number): Promise<void>;
       openRepository(): Promise<Repository | null>;
+      createRepository(input: { name: string; parentPath: string; branch: string }): Promise<Repository>;
+      chooseParentDirectory(): Promise<string | null>;
       snapshot(root: string): Promise<Repository>;
       commitDetails(root: string, hash: string): Promise<{ message: string; files: FileChange[] }>;
       fileDiff(root: string, request: { path: string; hash?: string; staged?: boolean; untracked?: boolean }): Promise<string>;
@@ -27,6 +30,7 @@ function App() {
   const [repositories, setRepositories] = useState<Record<number, Repository>>({});
   const [openError, setOpenError] = useState('');
   const [opening, setOpening] = useState(false);
+  const [createTarget, setCreateTarget] = useState<{ tab: number | null } | null>(null);
   const [active, setActive] = useState<number | null>(1);
   const [preferences, setPreferences] = useState(false);
   const [page, setPage] = useState('General');
@@ -89,8 +93,9 @@ function App() {
     if (ready !== true) return;
     if (action === 'new-tab') newTab();
     if (action === 'open-repo') void openRepository(true);
+    if (action === 'init-repo' && !createTarget) setCreateTarget({ tab: null });
     if (action === 'close-tab' && active !== null) closeTab(active);
-  }), [ready, tabs, active, opening]);
+  }), [ready, tabs, active, opening, createTarget]);
   useEffect(() => { window.gitforge.setTabActive(ready === true && active !== null); }, [ready, active]);
   useEffect(() => {
     const navigation = tabNavigation.current;
@@ -131,8 +136,15 @@ function App() {
     </div> : active !== null && repositories[active] ? <RepositoryView key={active} initial={repositories[active]}/> : active !== null ? <main className="welcome"><h1>Repositories</h1><div className="actions">
       <button disabled={opening} onClick={() => void openRepository(false)}><span aria-hidden="true">▰</span> Open</button>
       <button><span aria-hidden="true">↓</span> Clone</button>
-      <button><span aria-hidden="true">⊞</span> Create</button>
+      <button onClick={() => setCreateTarget({ tab: active })}><span aria-hidden="true">⊞</span> Create</button>
     </div></main> : <main className="empty"><h1>GitForge</h1><p>Open a new tab to get started.</p><button onClick={newTab}>New Tab</button></main>}
+    {createTarget && <CreateRepository onClose={() => setCreateTarget(null)} onCreated={repo => {
+      const target = createTarget.tab;
+      const id = target !== null && tabs.includes(target) ? target : nextId.current++;
+      if (id !== target) setTabs(previous => [...previous, id]);
+      setRepositories(previous => ({ ...previous, [id]: repo }));
+      setActive(id); setPreferences(false); setCreateTarget(null);
+    }}/>}
   </div>;
 }
 createRoot(document.getElementById('root')!).render(<React.StrictMode><App /></React.StrictMode>);

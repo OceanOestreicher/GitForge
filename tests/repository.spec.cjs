@@ -65,6 +65,32 @@ test('diff shows old/new line numbers across separate changes without hunk heade
   } finally { await app.close(); }
 });
 
+test('missing-newline notices render compactly without changing line numbers', async () => {
+  await fs.writeFile(path.join(root, 'ending.txt'), 'retained\n\ntest');
+  git('add', '.'); git('commit', '-m', 'Without final newline');
+  await fs.writeFile(path.join(root, 'ending.txt'), 'retained');
+  const app = await launchElectron();
+  try {
+    const page = await app.firstWindow(); await choose(app, root);
+    await page.getByRole('button', { name: 'Open', exact: true }).click();
+    await page.locator('.working-changes .file-row').filter({ hasText: 'ending.txt' }).click();
+    const diff = page.getByLabel('File diff');
+    const notices = diff.locator('.diff-notice');
+    await expect(notices).toHaveCount(2);
+    for (const notice of await notices.all()) {
+      await expect(notice).toContainText('No newline at end of file');
+      await expect(notice).toHaveCSS('padding-top', '0px');
+      await expect(notice).toHaveCSS('padding-bottom', '0px');
+      await expect(notice.locator('.old-line')).toHaveText('');
+      await expect(notice.locator('.new-line')).toHaveText('');
+    }
+    await expect(diff.locator('.notice')).toHaveCount(0);
+    const added = diff.locator('.addition');
+    await expect(added.locator('.new-line')).toHaveText('1');
+    await expect(added).toContainText('+ retained');
+  } finally { await app.close(); }
+});
+
 test('open repository, inspect history and working diffs without changing Git state', async () => {
   await fs.mkdir(path.join(root, 'src'));
   await fs.writeFile(path.join(root, 'src', 'tracked.txt'), 'original\n');

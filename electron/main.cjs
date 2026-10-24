@@ -20,6 +20,7 @@ function checkGit() {
 }
 
 app.whenReady().then(async () => {
+  app.setAppUserModelId('com.gitforge.desktop');
   const dataDirectory = app.commandLine.getSwitchValue('user-data-dir') || app.getPath('userData');
   const session = createSessionStore(dataDirectory);
   const profiles = createProfileStore(dataDirectory, safeStorage, (username, pat) => verifyGitHub(username, pat, (...args) => net.fetch(...args)));
@@ -136,7 +137,7 @@ app.whenReady().then(async () => {
     });
   }
   ipcMain.on('tab-active', (_event, active) => { tabActive = active === true; updateMenu(); });
-  window = new BrowserWindow({ width: 1200, height: 800, minWidth: 680, minHeight: 440, title: 'GitForge', backgroundColor: '#1e2025', webPreferences: {
+  window = new BrowserWindow({ width: 1200, height: 800, minWidth: 680, minHeight: 440, title: 'GitForge', icon: path.join(__dirname, '../assets/gitforge.ico'), backgroundColor: '#1e2025', webPreferences: {
     preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true
   } });
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));

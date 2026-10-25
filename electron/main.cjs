@@ -125,10 +125,10 @@ app.whenReady().then(async () => {
   ipcMain.handle('push-commits', (_event, root, input) => mutate(root, () => pushing.push(root, input, profiles.credentials(), (...args) => net.fetch(...args))));
   ipcMain.handle('fetch-repository', (_event, root) => mutate(root, async () => publish(await pulling.fetchRemotes(root, profiles.credentials()))));
   ipcMain.handle('pull-repository', (_event, root) => mutate(root, async () => publish(await pulling.pull(root, profiles.credentials(), activeProfile()))));
-  const branchActions = { 'switch': 'switchBranch', 'create': 'createBranch', 'checkout': 'checkoutCommit', 'reset': 'reset', 'merge': 'merge', 'stash': 'stash', 'apply-stash': 'applyStash', 'delete-stash': 'drop' };
+  const branchActions = { 'switch': 'switchBranch', 'create': 'createBranch', 'checkout': 'checkoutCommit', 'reset': 'reset', 'merge': 'merge', 'stash': 'stash', 'apply-stash': 'applyStash', 'delete-stash': 'drop', 'delete-branch': 'deleteBranch' };
   ipcMain.handle('branch-action', (_event, root, input) => mutate(root, async () => {
     if (!input || !Object.hasOwn(branchActions, input.action)) throw new Error('Invalid repository action.');
-    return publish(await branches[branchActions[input.action]](root, input, activeProfile()));
+    return publish(await branches[branchActions[input.action]](root, input, activeProfile(), input.action === 'delete-branch' && input.deleteRemote === true ? profiles.credentials() : undefined));
   }));
   ipcMain.handle('can-reset-commit', async (_event, root, hash) => {
     requireProfile(); if (!opened.has(root)) throw new Error('Open this repository first.');

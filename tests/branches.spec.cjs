@@ -23,11 +23,61 @@ test('branch dialog creates a checked-out local branch without an upstream; comm
   await page.locator('.repo-buttons').getByRole('button', { name: 'Branch', exact: true }).click();
   await page.getByLabel('Branch name', { exact: true }).fill('new-work');
   await page.getByRole('button', { name: 'Create Branch', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'Create Branch', exact: true })).toHaveCount(0);
   await expect.poll(() => git('branch', '--show-current')).toBe('new-work');
   expect(git('for-each-ref', '--format=%(upstream)', 'refs/heads/new-work')).toBe('');
   await action({ action: 'checkout', hash: initial }); expect(git('branch', '--show-current')).toBe('');
   expect(git('rev-parse', 'new-work')).toBe(initial);
   await action({ action: 'create', hash: initial, name: 'from-commit' }); expect(git('branch', '--show-current')).toBe('from-commit');
+});
+
+test('delete branch confirms deletion, preserves working files and remote refs, and rejects current branch', async () => {
+  git('switch', 'feature'); await write('feature.txt', 'exclusive commit\n'); git('add', '.'); git('commit', '-m', 'Feature only'); git('switch', 'main');
+  git('update-ref', 'refs/remotes/origin/feature', git('rev-parse', 'feature'));
+  await write('a.txt', 'working changes\n'); const before = git('status', '--porcelain');
+  const feature = page.locator('.sidebar-group').first().locator('.branch-row').filter({ hasText: /feature/ });
+  await expect(feature).toBeVisible(); await feature.click({ button: 'right' });
+  await page.getByRole('menuitem', { name: 'Delete Branch', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'Delete Branch' })).toContainText('Commits that exist only on this branch may be lost');
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click(); expect(git('branch', '--list', 'feature')).toContain('feature');
+  await feature.click({ button: 'right' }); await page.getByRole('menuitem', { name: 'Delete Branch', exact: true }).click();
+  await page.getByRole('button', { name: 'Confirm', exact: true }).click();
+  await expect(feature).toHaveCount(0); expect(git('branch', '--list', 'feature')).toBe(''); expect(git('rev-parse', '--verify', 'refs/remotes/origin/feature')).toBeTruthy();
+  expect(git('status', '--porcelain')).toBe(before); expect(await read('a.txt')).toBe('working changes\n'); expect(git('branch', '--show-current')).toBe('main');
+  await page.locator('.current-branch').click({ button: 'right' }); await expect(page.getByRole('menuitem', { name: 'Delete Branch', exact: true })).toHaveCount(0);
+  await expect(action({ action: 'delete-branch', ref: 'refs/heads/main' })).rejects.toThrow(/checked-out branch/);
+  await expect(action({ action: 'delete-branch', ref: 'refs/remotes/origin/feature' })).rejects.toThrow(/local branch/);
+});
+
+test('local-only branches hide counts until first push and show normal ahead counts afterwards', async () => {
+  const remote = test.info().outputPath('publish.git'); git('init', '--bare', remote); git('remote', 'add', 'origin', remote);
+  git('push', '-u', 'origin', 'main');
+  const feature = page.locator('.sidebar-group').first().locator('.branch-row').filter({ hasText: /feature/ });
+  await expect(feature).toHaveClass(/local-only-branch/); await expect(feature.locator('.ahead-count')).toHaveCount(0);
+  await action({ action: 'switch', ref: 'refs/heads/feature' });
+  await expect(page.locator('.repo-buttons').getByRole('button', { name: 'Push', exact: true })).toBeEnabled();
+  await page.evaluate(async root => window.gitforge.pushCommits(root, { force: false, createBranch: true }), root);
+  await expect(feature).not.toHaveClass(/local-only-branch/); await expect(feature.locator('.ahead-count')).toHaveCount(0);
+  await write('a.txt', 'local commit\n'); git('add', '.'); git('commit', '-m', 'Unpushed feature');
+  await expect(feature.locator('.ahead-count')).toContainText('1');
+});
+
+test('branch deletion optionally removes the configured remote branch and retains local branch on remote failure', async () => {
+  const remote = test.info().outputPath('delete.git'); git('init', '--bare', remote); git('remote', 'add', 'origin', remote);
+  git('push', 'origin', 'feature:refs/heads/published'); git('branch', '--set-upstream-to=origin/published', 'feature');
+  const feature = page.locator('.sidebar-group').first().locator('.branch-row').filter({ hasText: /feature/ });
+  await expect(feature).not.toHaveClass(/local-only-branch/);
+  await feature.click({ button: 'right' }); await page.getByRole('menuitem', { name: 'Delete Branch', exact: true }).click();
+  const removeRemote = page.getByRole('checkbox', { name: 'Also delete remote branch origin/published' });
+  await expect(removeRemote).not.toBeChecked(); await page.getByRole('button', { name: 'Confirm', exact: true }).click();
+  await expect(feature).toHaveCount(0); expect(git('ls-remote', '--heads', 'origin', 'refs/heads/published')).toBeTruthy();
+  git('branch', '--track', 'feature', 'origin/published'); await expect(feature).toBeVisible();
+  await feature.click({ button: 'right' }); await page.getByRole('menuitem', { name: 'Delete Branch', exact: true }).click(); await removeRemote.check();
+  git('remote', 'set-url', 'origin', remote + '-missing');
+  await page.getByRole('button', { name: 'Confirm', exact: true }).click();
+  await expect(page.getByRole('dialog').getByRole('alert')).toBeVisible(); expect(git('branch', '--list', 'feature')).toContain('feature');
+  git('remote', 'set-url', 'origin', remote); await page.getByRole('button', { name: 'Confirm', exact: true }).click();
+  await expect(feature).toHaveCount(0); expect(git('ls-remote', '--heads', 'origin', 'refs/heads/published')).toBe(''); expect(git('for-each-ref', '--format=%(refname)', 'refs/remotes/origin/published')).toBe('');
 });
 
 test('reset keeps committed changes unstaged or discards them and rejects unrelated commits', async () => {
@@ -103,7 +153,7 @@ test('context menus confirm stash, apply, delete and reset; dirty branch switchi
   await stashRow.click({ button: 'right' }); await page.getByRole('menuitem', { name: 'Apply Stash', exact: true }).click();
   await page.getByLabel('Delete stash after successful application').check(); await page.getByRole('button', { name: 'Apply Stash', exact: true }).click();
   await expect(stashRow).toHaveCount(0); await expect(row).toBeVisible(); expect(await read('a.txt')).toBe('saved from UI\n');
-  await page.locator('.branch-row').filter({ hasText: /^feature(?:\s|$)/ }).dblclick();
+  await page.locator('.sidebar-group').first().locator('.branch-row').filter({ hasText: /feature/ }).dblclick();
   await expect(page.getByRole('dialog', { name: 'Switch Branch' })).toBeVisible();
   await page.getByRole('button', { name: 'Cancel', exact: true }).click(); expect(git('branch', '--show-current')).toBe('main'); expect(await read('a.txt')).toBe('saved from UI\n');
   await action({ action: 'reset', hash: initial, mode: 'discard' });

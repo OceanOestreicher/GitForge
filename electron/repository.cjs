@@ -38,18 +38,34 @@ async function snapshot(root) {
       if (y !== ' ') unstaged.push({ path: file, oldPath, status: y });
     }
   }
-  const ahead = {}, behind = {};
+  const ahead = {}, behind = {}, remoteBranches = {};
   await Promise.all(local.map(async name => {
     const upstream = (await git(root, ['for-each-ref', '--format=%(upstream)', `refs/heads/${name}`])).trim();
-    ahead[name] = Number((await git(root, ['rev-list', '--count', `refs/heads/${name}`, ...(upstream ? ['--not', upstream] : ['--not', '--remotes'])]).catch(() => '0')).trim());
-    behind[name] = upstream ? Number((await git(root, ['rev-list', '--count', upstream, '--not', `refs/heads/${name}`]).catch(() => '0')).trim()) : 0;
+    const corresponding = await correspondingRemote(root, name, fullRefs, upstream);
+    if (corresponding) remoteBranches[name] = corresponding;
+    const comparison = corresponding?.ref;
+    ahead[name] = Number((await git(root, ['rev-list', '--count', `refs/heads/${name}`, ...(comparison ? ['--not', comparison] : ['--not', '--remotes'])]).catch(() => '0')).trim());
+    behind[name] = comparison ? Number((await git(root, ['rev-list', '--count', comparison, '--not', `refs/heads/${name}`]).catch(() => '0')).trim()) : 0;
   }));
   const fileVersion = (await Promise.all([...new Set([...staged, ...unstaged].map(file => file.path)), '.git/index'].map(async file => {
     const stat = await fs.lstat(path.join(root, file)).catch(() => null);
     return `${file}:${stat?.mtimeMs}:${stat?.ctimeMs}:${stat?.size}`;
   }))).join('|');
   const stashEntries = stash.trim().split('\n').filter(Boolean).map(line => { const fields = line.split('\t'); return { ref: fields[0], hash: fields[fields.length - 1], message: fields.slice(1, -1).join('\t') }; });
-  return { path: root, name: path.basename(root), branch: branch.trim(), local, remote, ahead, behind, fileVersion, unpushed: ahead[branch.trim()] || 0, stashes: stashEntries.map(entry => `${entry.ref}\t${entry.message}`), stashEntries, staged, unstaged, commits: history };
+  return { path: root, name: path.basename(root), branch: branch.trim(), local, remote, ahead, behind, remoteBranches, canPush: local.includes(branch.trim()) && (!remoteBranches[branch.trim()] || ahead[branch.trim()] > 0), fileVersion, unpushed: ahead[branch.trim()] || 0, stashes: stashEntries.map(entry => `${entry.ref}\t${entry.message}`), stashEntries, staged, unstaged, commits: history };
+}
+async function correspondingRemote(root, name, refs, upstream) {
+  refs ??= (await git(root, ['for-each-ref', '--format=%(refname)', 'refs/remotes'])).trim().split('\n');
+  upstream ??= (await git(root, ['for-each-ref', '--format=%(upstream)', `refs/heads/${name}`])).trim();
+  const remotes = (await git(root, ['remote'])).trim().split('\n').filter(Boolean);
+  if (upstream && refs.includes(upstream)) {
+    const remote = (await git(root, ['config', '--get', `branch.${name}.remote`]).catch(() => '')).trim();
+    const branch = (await git(root, ['config', '--get', `branch.${name}.merge`]).catch(() => '')).trim();
+    if (remotes.includes(remote) && branch.startsWith('refs/heads/')) return { ref: upstream, remote, branch };
+  }
+  const matching = remotes.filter(remote => refs.includes(`refs/remotes/${remote}/${name}`));
+  const remote = matching.includes('origin') ? 'origin' : matching.length === 1 ? matching[0] : null;
+  return remote ? { ref: `refs/remotes/${remote}/${name}`, remote, branch: `refs/heads/${name}` } : null;
 }
 async function openRepository(folder) {
   if ((await git(folder, ['rev-parse', '--is-bare-repository'])).trim() === 'true') throw new Error('Bare repositories are not supported. Choose a repository working folder.');
@@ -145,4 +161,4 @@ async function commit(root, input, profile) {
   }, (error, _stdout, stderr) => error ? reject(new Error(stderr.trim() || 'Commit failed. Check Git configuration and commit hooks.')) : resolve()));
   return snapshot(root);
 }
-module.exports = { git, openRepository, snapshot, commitDetails, diff, commits, createRepository, changeFiles, commit };
+module.exports = { git, openRepository, snapshot, commitDetails, diff, commits, createRepository, changeFiles, commit, correspondingRemote };

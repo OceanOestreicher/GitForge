@@ -221,4 +221,18 @@ async function merge(root, input, profile) {
   return snapshot(root);
 }
 async function drop(root, input) { await idle(root); await requireStash(root, input.hash); await dropStash(root, input.hash); return snapshot(root); }
-module.exports = { canReset, stash, applyStash, switchBranch, createBranch, checkoutCommit, reset, merge, drop };
+async function deleteBranch(root, input, _profile, credentials) {
+  await idle(root);
+  const ref = await branchRef(root, input.ref);
+  if (!ref.startsWith('refs/heads/')) throw new Error('Select a local branch to delete.');
+  if (ref === `refs/heads/${await attached(root)}`) throw new Error('The checked-out branch cannot be deleted.');
+  if (input.deleteRemote === true) {
+    const remote = await require('./repository.cjs').correspondingRemote(root, ref.slice(11));
+    if (!remote || remote.ref !== input.remoteRef) throw new Error('The corresponding remote branch changed. Close this dialog and try again.');
+    await require('./push.cjs').remoteGit(root, ['push', '--', remote.remote, `:${remote.branch}`], credentials, 'delete the remote branch');
+    await git(root, ['update-ref', '-d', remote.ref]);
+  }
+  await git(root, ['branch', '-D', '--', ref.slice(11)]);
+  return snapshot(root);
+}
+module.exports = { canReset, stash, applyStash, switchBranch, createBranch, checkoutCommit, reset, merge, drop, deleteBranch };

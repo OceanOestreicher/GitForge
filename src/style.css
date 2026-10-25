@@ -18,3 +18,4 @@
 .behind-count{color:#9fc9e7;font-size:14px;font-weight:600}
 .diff-row.diff-notice{padding:0;text-align:left;color:#929eae;font-style:italic}
 .create-dialog label.choice{display:flex;align-items:center;gap:10px}.choice input{width:auto;flex-shrink:0}.branch-row,.stash-row{cursor:default;user-select:none}.branch-row:hover,.stash-row:hover{background:#363b46}
+.local-only-branch{opacity:.5}

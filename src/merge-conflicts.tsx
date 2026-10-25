@@ -19,7 +19,7 @@ function SourceCode({ rows, side, selections, disabled, change, region }: { regi
     });
     return () => cancelAnimationFrame(frame);
   }, [region]);
-  return <pre ref={code} className="merge-code">{rows.map((row, index) => <span key={index} data-region={row.region} className={`merge-code-row${row.region !== undefined ? ' merge-conflict-line' : ''}`}>
+  return <pre ref={code} className="merge-code" data-side={side}>{rows.map((row, index) => <span key={index} data-region={row.region} className={`merge-code-row${row.region !== undefined ? ' merge-conflict-line' : ''}`}>
     <span className="merge-line-choice">{row.region !== undefined && <input type="checkbox" aria-label={`Keep ${side === 'ours' ? 'local' : 'incoming'} ${row.number !== null ? `line ${row.number}` : `change ${row.region + 1}`}`} disabled={disabled} checked={Boolean(selections[row.region][side][row.line || 0])} onChange={event => change(row.region!, row.line || 0, event.target.checked)}/>}</span>
     <span className="merge-line-number" aria-label="Line number">{row.number ?? ''}</span><span className="merge-line-text">{row.text || ' '}</span>
   </span>)}</pre>;
@@ -36,7 +36,7 @@ function OutputEditor({ output, disabled, change, region, targetLine }: { region
     return () => cancelAnimationFrame(frame);
   }, [region]);
   return <div className="merge-output-editor">
-    <div className="merge-output-gutter" aria-hidden="true"><div ref={numbers}>{rows.map((_, index) => <div key={index}>{index + 1}</div>)}</div></div>
+    <div className="merge-output-gutter" aria-hidden="true"><div ref={numbers}>{rows.map((_, index) => <div key={index} className={rows[index].conflict ? "merge-conflict-line" : ""}>{index + 1}</div>)}</div></div>
     <div className="merge-output-surface"><pre ref={background} className="merge-output-highlights" aria-hidden="true">{rows.map((row, index) => <span key={index} className={row.conflict ? 'merge-conflict-line' : ''}>{row.text || ' '}</span>)}</pre>
       <textarea ref={input} className="merge-output-input" aria-label="Merge output" value={outputText(output)} disabled={disabled} spellCheck={false} wrap="off" onScroll={sync} onChange={event => change(event.target.value)}/>
     </div>

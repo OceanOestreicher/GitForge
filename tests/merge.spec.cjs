@@ -16,7 +16,7 @@ async function confirmAbort(response = 1) {
   await confirmation.getByRole('button', { name: response ? 'Abort Merge' : 'Cancel', exact: true }).click();
   await expect(confirmation).toHaveCount(0);
 }
-const dialog = () => page.getByRole('dialog', { name: 'Merge Conflicts', exact: true });
+const dialog = () => page.getByRole('region', { name: 'Merge Conflicts', exact: true });
 test.beforeEach(async () => {
   root = await fs.mkdtemp(path.join(os.tmpdir(), 'gitforge-merge-')); git('init', '-b', 'main');
   await write('a.txt', 'base\n'); await write('b.txt', 'base\n'); await write('clean.txt', 'base\n'); commit('Initial'); git('branch', 'feature');

@@ -84,9 +84,7 @@ function FileResolution({ conflict, execute }: { conflict: Conflict; execute: (i
 }
 
 export function MergeConflicts({ conflict, execute }: { conflict: Conflict; execute: (input: ConflictAction) => Promise<void> }) {
-  const dialog = useRef<HTMLDialogElement>(null);
-  useEffect(() => { dialog.current?.showModal(); return () => dialog.current?.close(); }, []);
-  return <dialog ref={dialog} className="merge-dialog merge-file-dialog" aria-labelledby="merge-title" onCancel={event => event.preventDefault()}>
+  return <section className="merge-dialog merge-file-dialog merge-workspace" aria-labelledby="merge-title">
     <FileResolution key={`${conflict.id}:${conflict.file.index}`} conflict={conflict} execute={execute}/>
-  </dialog>;
+  </section>;
 }

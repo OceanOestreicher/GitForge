@@ -248,7 +248,7 @@ test('stash application conflict restores preexisting staged, unstaged and untra
   await write('b.txt', 'staged\n'); git('add', 'b.txt'); await write('b.txt', 'unstaged\n'); await write('new.txt', 'safe\n');
   const before = git('status', '--porcelain');
   await action({ action: 'apply-stash', hash, deleteAfter: true });
-  await page.getByRole('button', { name: 'Abort Merge', exact: true }).click(); await page.getByRole('dialog', { name: 'Abort Merge?', exact: true }).getByRole('button', { name: 'Abort Merge', exact: true }).click(); await expect(page.getByRole('dialog', { name: 'Merge Conflicts' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Abort Merge', exact: true }).click(); await page.getByRole('dialog', { name: 'Abort Merge?', exact: true }).getByRole('button', { name: 'Abort Merge', exact: true }).click(); await expect(page.getByRole('region', { name: 'Merge Conflicts' })).toHaveCount(0);
   expect(git('status', '--porcelain')).toBe(before); expect(git('show', ':b.txt')).toBe('staged'); expect(await read('b.txt')).toBe('unstaged\n'); expect(await read('new.txt')).toBe('safe\n');
   expect(git('stash', 'list', '--format=%H')).toBe(hash); expect(git('ls-files', '-u')).toBe('');
 });
@@ -263,7 +263,7 @@ test('branch merges fast-forward, create divergent merge commits, and abort conf
   await write('a.txt', 'main conflict\n'); git('add', '.'); git('commit', '-m', 'Main conflict'); const before = git('rev-parse', 'HEAD');
   await action({ action: 'switch', ref: 'refs/heads/feature' }); await write('a.txt', 'other conflict\n'); git('add', '.'); git('commit', '-m', 'Feature conflict');
   await action({ action: 'switch', ref: 'refs/heads/main' }); await action({ action: 'merge', ref: 'refs/heads/feature' });
-  await page.getByRole('button', { name: 'Abort Merge', exact: true }).click(); await page.getByRole('dialog', { name: 'Abort Merge?', exact: true }).getByRole('button', { name: 'Abort Merge', exact: true }).click(); await expect(page.getByRole('dialog', { name: 'Merge Conflicts' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Abort Merge', exact: true }).click(); await page.getByRole('dialog', { name: 'Abort Merge?', exact: true }).getByRole('button', { name: 'Abort Merge', exact: true }).click(); await expect(page.getByRole('region', { name: 'Merge Conflicts' })).toHaveCount(0);
   expect(git('rev-parse', 'HEAD')).toBe(before); expect(git('status', '--porcelain')).toBe(''); expect(await read('a.txt')).toMatch(/^main conflict\r?\n$/);
 });
 
@@ -299,7 +299,7 @@ test('failed stash-and-switch restores original branch and changes and keeps a r
   git('switch', 'feature'); await write('a.txt', 'incompatible branch\n'); git('add', '.'); git('commit', '-m', 'Incompatible'); git('switch', 'main');
   await write('a.txt', 'local work\n'); await write('new.txt', 'untracked\n'); const before = git('status', '--porcelain');
   await action({ action: 'switch', ref: 'refs/heads/feature', strategy: 'stash' });
-  await page.getByRole('button', { name: 'Abort Merge', exact: true }).click(); await page.getByRole('dialog', { name: 'Abort Merge?', exact: true }).getByRole('button', { name: 'Abort Merge', exact: true }).click(); await expect(page.getByRole('dialog', { name: 'Merge Conflicts' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Abort Merge', exact: true }).click(); await page.getByRole('dialog', { name: 'Abort Merge?', exact: true }).getByRole('button', { name: 'Abort Merge', exact: true }).click(); await expect(page.getByRole('region', { name: 'Merge Conflicts' })).toHaveCount(0);
   expect(git('branch', '--show-current')).toBe('main'); expect(git('status', '--porcelain')).toBe(before);
   expect(await read('a.txt')).toBe('local work\n'); expect(await read('new.txt')).toBe('untracked\n'); expect(git('stash', 'list')).toContain('GitForge branch switch');
   expect(git('ls-files', '-u')).toBe('');
@@ -314,4 +314,44 @@ test('stashing staged renames and deletions restores their index state without u
   expect(git('diff', '--cached', '--name-status')).toContain('R100\ta.txt\trenamed.txt'); expect(git('diff', '--cached', '--name-status')).toContain('D\tb.txt');
   expect(git('show', ':other.txt')).toBe('unrelated'); expect(git('stash', 'list')).toBe('');
   expect(git('show', ':added.txt')).toBe('staged addition'); expect(await read('added.txt')).toBe('unstaged addition\n');
+});
+
+
+test('branch progress follows checkout and merge destinations and conflicts replace repository content', async () => {
+  const rows = page.locator('.sidebar-group').first().locator('.branch-row');
+  const main = rows.filter({ hasText: /^main$/ }), feature = rows.filter({ hasText: /^feature$/ });
+  const progress = page.getByRole('status', { name: 'Branch operation in progress', exact: true });
+  const hold = async method => app.evaluate(({ app }, method) => {
+    const load = process.getBuiltinModule('module').createRequire(`${app.getAppPath()}/electron/main.cjs`);
+    const branches = load('./branches.cjs');
+    const original = branches[method];
+    const gate = new Promise(resolve => { globalThis.releaseBranchOperation = resolve; });
+    branches[method] = async (...args) => {
+      await gate;
+      branches[method] = original; return original(...args);
+    };
+  }, method);
+  const release = async () => app.evaluate(() => globalThis.releaseBranchOperation());
+  await expect(main.locator('.branch-icon')).toHaveCount(1); await expect(feature.locator('.branch-icon')).toHaveCount(1);
+  await hold('switchBranch'); await feature.dblclick();
+  await expect(feature.getByRole('status')).toBeVisible(); expect(git('branch', '--show-current')).toBe('main');
+  await release(); await expect(progress).toHaveCount(0); await expect(feature).toHaveClass(/current-branch/);
+  await write('feature.txt', 'feature work\n'); git('add', '.'); git('commit', '-m', 'Feature work');
+  await action({ action: 'switch', ref: 'refs/heads/main' });
+  await hold('merge'); await feature.click({ button: 'right' }); await page.getByRole('menuitem', { name: 'Merge into current branch', exact: true }).click();
+  await expect(main.getByRole('status')).toBeVisible(); await expect(feature.getByRole('status')).toHaveCount(0);
+  await release(); await expect(progress).toHaveCount(0); await expect(page.locator('.history')).toContainText('Feature work');
+  expect(await read('feature.txt')).toBe('feature work\n');
+  await action({ action: 'switch', ref: 'refs/heads/feature' }); await write('a.txt', 'incoming\n'); git('add', '.'); git('commit', '-m', 'Incoming conflict');
+  await action({ action: 'switch', ref: 'refs/heads/main' }); await write('a.txt', 'local\n'); git('add', '.'); git('commit', '-m', 'Local conflict');
+  await expect(page.locator('.history')).toContainText('Local conflict');
+  await hold('merge'); await feature.click({ button: 'right' }); await page.getByRole('menuitem', { name: 'Merge into current branch', exact: true }).click();
+  await expect(main.getByRole('status')).toBeVisible(); await release();
+  const resolver = page.getByRole('region', { name: 'Merge Conflicts', exact: true });
+  await expect(resolver).toBeVisible(); await expect(progress).toHaveCount(0);
+  await expect(page.getByRole('dialog', { name: 'Merge Conflicts', exact: true })).toHaveCount(0);
+  await expect(page.locator('.repo-sidebar')).toBeVisible(); await expect(page.locator('.history,.working-changes,.commit-information,.diff-panel')).toHaveCount(0);
+  await resolver.getByLabel('Select all local changes', { exact: true }).check();
+  await resolver.getByRole('button', { name: 'Resolve', exact: true }).click();
+  await expect(resolver).toHaveCount(0); await expect(page.locator('.history')).toBeVisible(); await expect(page.locator('.working-changes')).toBeVisible();
 });

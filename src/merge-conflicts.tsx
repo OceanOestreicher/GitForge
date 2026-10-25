@@ -1,3 +1,4 @@
+import { Message } from './messages';
 import { useEffect, useRef, useState } from 'react';
 export type Conflict = { id: string; kind: 'merge' | 'pull' | 'stash'; index: number; total: number; path: string; ours: string; theirs: string; canBoth: boolean };
 export type ConflictAction = { action: 'abort' | 'resolve'; id: string; index?: number; choice?: 'ours' | 'theirs' | 'both' };
@@ -13,7 +14,7 @@ export function MergeConflicts({ conflict, execute }: { conflict: Conflict; exec
     if (working.current) return;
     working.current = true; setBusy(true); setError('');
     try { await execute({ action, id: conflict.id, index: conflict.index, choice: ours && theirs ? 'both' : ours ? 'ours' : 'theirs' }); }
-    catch (failure) { setError(failure instanceof Error ? failure.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '') : 'Could not update the merge.'); }
+    catch (failure) { setError(failure instanceof Error ? failure.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '') : Message["conflict.updateFailed"]); }
     finally { working.current = false; setBusy(false); }
   };
   return <dialog ref={dialog} className="merge-dialog" aria-labelledby="merge-title" onCancel={event => event.preventDefault()}>

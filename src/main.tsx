@@ -1,3 +1,4 @@
+import { Message } from './messages';
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './style.css';
@@ -53,7 +54,7 @@ function App() {
   const activeProfile = profiles.find(profile => profile.active);
   const [profileTime, setProfileTime] = useState(Date.now());
   const expiration = activeProfile?.expiresAt ? Date.parse(activeProfile.expiresAt) : NaN;
-  const profileWarning = activeProfile?.patInvalid ? 'The active profile PAT has expired or is no longer valid. Edit this profile to replace it.' : Number.isFinite(expiration) && expiration <= profileTime ? 'The active profile PAT has expired. Edit this profile to replace it.' : Number.isFinite(expiration) && expiration - profileTime <= 2 * 24 * 60 * 60 * 1000 ? 'The active profile PAT expires within 2 days. Edit this profile to replace it.' : '';
+  const profileWarning = activeProfile?.patInvalid ? Message["profile.pat.invalid"] : Number.isFinite(expiration) && expiration <= profileTime ? Message["profile.pat.expired"] : Number.isFinite(expiration) && expiration - profileTime <= 2 * 24 * 60 * 60 * 1000 ? Message["profile.pat.expiringSoon"] : '';
   useEffect(() => {
     let alive = true;
     const refresh = async () => { try { const values = await window.gitforge.refreshProfileStatus(); if (alive) { setProfiles(values); setProfileTime(Date.now()); } } catch { /* Keep cached status while offline. */ } };
@@ -157,7 +158,7 @@ function App() {
   }, [ready, tabs]);
   useEffect(() => { tabStrip.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest', inline: 'nearest' }); }, [active]);
 
-  if (ready !== true) return <main className="notice" role="status"><h1>{ready === null ? 'Starting GitForge…' : 'Git is required'}</h1>{ready === false && <p>Install Git for Windows and ensure it is available on PATH, then restart GitForge.</p>}</main>;
+  if (ready !== true) return <main className="notice" role="status"><h1>{ready === null ? 'Starting GitForge…' : Message["git.required.title"]}</h1>{ready === false && <p>{Message["git.required.instructions"]}</p>}</main>;
   return <div className="app">
     <header className="tabbar">
       <div className="tab-navigation" ref={tabNavigation} inert={profileRequired}>

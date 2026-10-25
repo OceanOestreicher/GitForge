@@ -1,3 +1,4 @@
+const { Message } = require('../dist-electron/messages.cjs');
 const { app, BrowserWindow, Menu, ipcMain, dialog, safeStorage, net } = require('electron');
 const { verifyGitHub } = require('./github.cjs');
 const { createProfileStore } = require('./profiles.cjs');
@@ -25,19 +26,19 @@ app.whenReady().then(async () => {
   const dataDirectory = app.commandLine.getSwitchValue('user-data-dir') || app.getPath('userData');
   const session = createSessionStore(dataDirectory);
   const profiles = createProfileStore(dataDirectory, safeStorage, (username, pat) => verifyGitHub(username, pat, (...args) => net.fetch(...args)));
-  const activeProfile = () => { const profile = profiles.list().find(profile => profile.active); if (!profile) throw new Error('Select an active profile first.'); return profile; };
+  const activeProfile = () => { const profile = profiles.list().find(profile => profile.active); if (!profile) throw new Error(Message["profile.activeRequired"]); return profile; };
   const operations = new Set();
   const operationVersions = new Map();
   const mutate = async (root, work, resolving = false) => {
     requireProfile();
-    if (!opened.has(root)) throw new Error('Open this repository first.');
-    if (operations.has(root)) throw new Error('A repository operation is already in progress.');
-    if (!resolving && await require('./conflicts.cjs').load(root)) throw new Error('Resolve or abort the current merge conflicts first.');
-    if (operations.has(root)) throw new Error('A repository operation is already in progress.');
+    if (!opened.has(root)) throw new Error(Message["repository.open.required"]);
+    if (operations.has(root)) throw new Error(Message["repository.operation.inProgress"]);
+    if (!resolving && await require('./conflicts.cjs').load(root)) throw new Error(Message["conflict.resolveOrAbortRequired"]);
+    if (operations.has(root)) throw new Error(Message["repository.operation.inProgress"]);
     operationVersions.set(root, (operationVersions.get(root) || 0) + 1);
     operations.add(root); try { return await work(); } finally { operations.delete(root); operationVersions.set(root, (operationVersions.get(root) || 0) + 1); }
   };
-  const requireProfile = () => { if (!profiles.list().length) throw new Error('Create a profile before using repositories.'); };
+  const requireProfile = () => { if (!profiles.list().length) throw new Error(Message["profile.required"]); };
   gitAvailable = await checkGit();
   const restored = [];
   let savedRoots = [];
@@ -95,7 +96,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('git-status', () => gitAvailable);
   ipcMain.handle('restore-session', () => ({ repositories: restored, activeIndex: restoredActive }));
   ipcMain.handle('save-session', (_event, paths, activeIndex) => {
-    if (!gitAvailable || !Array.isArray(paths) || !paths.every(root => opened.has(root)) || !Number.isInteger(activeIndex)) throw new Error('Invalid repository session.');
+    if (!gitAvailable || !Array.isArray(paths) || !paths.every(root => opened.has(root)) || !Number.isInteger(activeIndex)) throw new Error(Message["repository.sessionInvalid"]);
     session.save(paths, activeIndex);
     savedRoots = [...new Set(paths)];
   });
@@ -109,7 +110,7 @@ app.whenReady().then(async () => {
   });
   ipcMain.handle('create-repository', async (_event, input) => {
     requireProfile();
-    if (!gitAvailable) throw new Error('Git is required to create a repository.');
+    if (!gitAvailable) throw new Error(Message["git.required.create"]);
     const data = await repository.createRepository(input);
     opened.add(data.path);
     return data;
@@ -117,8 +118,8 @@ app.whenReady().then(async () => {
   let cloning = false;
   ipcMain.handle('clone-repository', async (_event, input) => {
     requireProfile();
-    if (!gitAvailable) throw new Error('Git is required to clone a repository.');
-    if (cloning) throw new Error('A clone is already in progress. Wait for it to finish.');
+    if (!gitAvailable) throw new Error(Message["git.required.clone"]);
+    if (cloning) throw new Error(Message["clone.inProgress"]);
     cloning = true;
     try {
       const data = await cloneRepository(input, profiles.credentials());
@@ -129,7 +130,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('change-files', (_event, root, input) => mutate(root, () => repository.changeFiles(root, input)));
   ipcMain.handle('commit-changes', (_event, root, input) => mutate(root, () => repository.commit(root, input, activeProfile())));
   ipcMain.handle('conflict-action', (_event, root, input) => mutate(root, async () => {
-    if (!input || !['abort', 'resolve'].includes(input.action)) throw new Error('Select a conflict action.');
+    if (!input || !['abort', 'resolve'].includes(input.action)) throw new Error(Message["conflict.actionRequired"]);
     return publish(await require('./conflicts.cjs')[input.action](root, input));
   }, true));
   ipcMain.handle('prepare-push', (_event, root, branch) => mutate(root, () => pushing.destination(root, profiles.credentials(), branch)));
@@ -138,11 +139,11 @@ app.whenReady().then(async () => {
   ipcMain.handle('pull-repository', (_event, root, branch) => mutate(root, async () => publish(await (branch ? pulling.pullBranch(root, profiles.credentials(), activeProfile(), branch) : pulling.pull(root, profiles.credentials(), activeProfile())))));
   const branchActions = { 'switch': 'switchBranch', 'create': 'createBranch', 'checkout': 'checkoutCommit', 'reset': 'reset', 'merge': 'merge', 'stash': 'stash', 'apply-stash': 'applyStash', 'delete-stash': 'drop', 'delete-branch': 'deleteBranch', 'delete-remote-branch': 'deleteRemoteBranch' };
   ipcMain.handle('branch-action', (_event, root, input) => mutate(root, async () => {
-    if (!input || !Object.hasOwn(branchActions, input.action)) throw new Error('Invalid repository action.');
+    if (!input || !Object.hasOwn(branchActions, input.action)) throw new Error(Message["repository.actionInvalid"]);
     return publish(await branches[branchActions[input.action]](root, input, activeProfile(), (input.action === 'delete-remote-branch' || (input.action === 'delete-branch' && input.deleteRemote === true)) ? profiles.credentials() : undefined));
   }));
   ipcMain.handle('can-reset-commit', async (_event, root, hash) => {
-    requireProfile(); if (!opened.has(root)) throw new Error('Open this repository first.');
+    requireProfile(); if (!opened.has(root)) throw new Error(Message["repository.open.required"]);
     return branches.canReset(root, hash);
   });
   ipcMain.handle('choose-parent-directory', async () => {
@@ -152,7 +153,7 @@ app.whenReady().then(async () => {
   });
   for (const [channel, method] of [['repository-snapshot', 'snapshot'], ['commit-details', 'commitDetails'], ['file-diff', 'diff'], ['more-commits', 'commits']]) {
     ipcMain.handle(channel, async (_event, root, argument) => {
-      if (!opened.has(root)) throw new Error('Open this repository first.');
+      if (!opened.has(root)) throw new Error(Message["repository.open.required"]);
       requireProfile();
       return repository[method](root, argument);
     });

@@ -1,3 +1,4 @@
+const { Message, addData } = require('../dist-electron/messages.cjs');
 const { execFile } = require('node:child_process');
 const path = require('node:path');
 const fs = require('node:fs/promises');
@@ -94,14 +95,14 @@ async function correspondingRemote(root, name, refs, upstream) {
   return remote ? { ref: `refs/remotes/${remote}/${name}`, remote, branch: `refs/heads/${name}` } : null;
 }
 async function openRepository(folder) {
-  if ((await git(folder, ['rev-parse', '--is-bare-repository'])).trim() === 'true') throw new Error('Bare repositories are not supported. Choose a repository working folder.');
+  if ((await git(folder, ['rev-parse', '--is-bare-repository'])).trim() === 'true') throw new Error(Message["repository.bareUnsupported"]);
   const root = path.resolve((await git(folder, ['rev-parse', '--show-toplevel'])).trim());
   const stat = await fs.stat(path.join(root, '.git'));
-  if (!stat.isDirectory()) throw new Error('Worktrees and submodule working folders are not supported.');
+  if (!stat.isDirectory()) throw new Error(Message["repository.worktreeUnsupported"]);
   return snapshot(root);
 }
 async function commitDetails(root, hash) {
-  if (!/^[a-f0-9]{40,64}$/.test(hash)) throw new Error('Invalid commit identifier.');
+  if (!/^[a-f0-9]{40,64}$/.test(hash)) throw new Error(Message["commit.id.invalid"]);
   const [message, changes] = await Promise.all([
     git(root, ['show', '-s', '--format=%B', hash]),
     git(root, ['diff-tree', '--root', '--no-commit-id', '--name-status', '-r', '-z', '--no-renames', hash])
@@ -114,17 +115,17 @@ async function commitDetails(root, hash) {
   return { message: message.trimEnd(), files };
 }
 async function diff(root, request) {
-  if (typeof request.path !== 'string' || !request.path) throw new Error('Invalid file.');
+  if (typeof request.path !== 'string' || !request.path) throw new Error(Message["file.invalid"]);
   if (request.hash) {
-    if (!/^[a-f0-9]{40,64}$/.test(request.hash)) throw new Error('Invalid commit identifier.');
+    if (!/^[a-f0-9]{40,64}$/.test(request.hash)) throw new Error(Message["commit.id.invalid"]);
     return git(root, ['show', '--format=', '--first-parent', '--root', '--no-ext-diff', '--no-textconv', request.hash, '--', request.path]);
   }
   if (request.untracked) {
     const absolute = path.resolve(root, request.path);
-    if (!absolute.startsWith(root + path.sep) && !absolute.startsWith(root + '/')) throw new Error('Invalid file path.');
+    if (!absolute.startsWith(root + path.sep) && !absolute.startsWith(root + '/')) throw new Error(Message["file.path.invalid"]);
     const stat = await fs.lstat(absolute);
-    if (!stat.isFile()) return 'Preview unavailable for this file type.';
-    if (stat.size > 2 * 1024 * 1024) return 'File too large to preview (over 2 MB).';
+    if (!stat.isFile()) return Message["diff.typeUnsupported"];
+    if (stat.size > 2 * 1024 * 1024) return Message["diff.fileTooLarge"];
     const buffer = await fs.readFile(absolute);
     if (buffer.includes(0)) return 'Binary file';
     return buffer.toString('utf8').split('\n').map(line => '+' + line).join('\n');
@@ -132,21 +133,21 @@ async function diff(root, request) {
   return git(root, ['diff', ...(request.staged ? ['--cached'] : []), '--no-ext-diff', '--no-textconv', '--', request.path]);
 }
 async function createRepository(input) {
-  if (!input || typeof input.name !== 'string' || typeof input.parentPath !== 'string' || typeof input.branch !== 'string') throw new Error('Enter a repository name, parent directory, and default branch.');
+  if (!input || typeof input.name !== 'string' || typeof input.parentPath !== 'string' || typeof input.branch !== 'string') throw new Error(Message["repository.create.inputRequired"]);
   const name = input.name.trim(), parent = input.parentPath.trim(), branch = input.branch.trim();
-  if (!name || /[<>:"/\\|?*\x00-\x1f]/.test(name) || /[. ]$/.test(name) || /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(name) || name === '.' || name === '..' || name.toLowerCase() === '.git') throw new Error('Enter a valid Windows folder name for the repository.');
-  if (!path.isAbsolute(parent)) throw new Error('Enter an absolute parent directory path.');
-  const parentInfo = await fs.stat(parent).catch(() => { throw new Error('The parent directory does not exist or cannot be accessed.'); });
-  if (!parentInfo.isDirectory()) throw new Error('The parent path must be a directory.');
-  if (!branch || branch.startsWith('-')) throw new Error('Enter a valid default branch name.');
-  await git(parent, ['check-ref-format', `refs/heads/${branch}`]).catch(() => { throw new Error('The default branch name is invalid.'); });
+  if (!name || /[<>:"/\\|?*\x00-\x1f]/.test(name) || /[. ]$/.test(name) || /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(name) || name === '.' || name === '..' || name.toLowerCase() === '.git') throw new Error(Message["repository.create.nameInvalid"]);
+  if (!path.isAbsolute(parent)) throw new Error(Message["directory.parent.absoluteRequired"]);
+  const parentInfo = await fs.stat(parent).catch(() => { throw new Error(Message["directory.parent.unavailable"]); });
+  if (!parentInfo.isDirectory()) throw new Error(Message["directory.parent.notDirectory"]);
+  if (!branch || branch.startsWith('-')) throw new Error(Message["repository.create.branchRequired"]);
+  await git(parent, ['check-ref-format', `refs/heads/${branch}`]).catch(() => { throw new Error(Message["repository.create.branchInvalid"]); });
   const destination = path.join(path.resolve(parent), name);
   // mkdir without recursive creation reserves a new destination without modifying
   // an existing directory, including an existing repository.
   try { await fs.mkdir(destination); }
   catch (error) {
-    if (error.code === 'EEXIST') throw new Error('A folder with this repository name already exists. Choose a different name or parent directory.');
-    throw new Error(`Cannot create repository folder: ${error.message}`);
+    if (error.code === 'EEXIST') throw new Error(Message["repository.create.destinationExists"]);
+    throw new Error(addData(Message["repository.create.folderFailed"], error.message));
   }
   try {
     await git(destination, ['init', `--initial-branch=${branch}`]);
@@ -154,14 +155,14 @@ async function createRepository(input) {
     await fs.writeFile(path.join(destination, '.gitignore'), '# Add file patterns to ignore below.\n', { flag: 'wx' });
     return await openRepository(destination);
   } catch (error) {
-    throw new Error(`Repository creation failed: ${error.message}. Check ${destination} before trying again.`);
+    throw new Error(addData(Message["repository.create.failed"], error.message, destination));
   }
 }
 async function changeFiles(root, input) {
-  if (!input || !['stage', 'unstage', 'discard'].includes(input.action) || !Array.isArray(input.paths) || !input.paths.length || !input.paths.every(file => typeof file === 'string')) throw new Error('Select files first.');
+  if (!input || !['stage', 'unstage', 'discard'].includes(input.action) || !Array.isArray(input.paths) || !input.paths.length || !input.paths.every(file => typeof file === 'string')) throw new Error(Message["file.selectionRequired"]);
   const state = await snapshot(root);
   const candidates = input.action === 'unstage' ? state.staged : state.unstaged;
-  const files = [...new Set(input.paths)].map(file => { const change = candidates.find(change => change.path === file); if (!change) throw new Error('File state changed. Reopen the repository and select the files again.'); return change; });
+  const files = [...new Set(input.paths)].map(file => { const change = candidates.find(change => change.path === file); if (!change) throw new Error(Message["file.stateChanged"]); return change; });
   const paths = [...new Set(files.flatMap(file => file.oldPath ? [file.path, file.oldPath] : [file.path]))];
   if (input.action === 'stage') await git(root, ['add', '-A', '--', ...paths]);
   else if (input.action === 'unstage') {
@@ -172,21 +173,21 @@ async function changeFiles(root, input) {
     if (tracked.length) await git(root, ['restore', '--worktree', '--', ...tracked]);
     for (const file of files.filter(file => file.untracked)) {
       const absolute = path.resolve(root, file.path);
-      if (!absolute.startsWith(root + path.sep)) throw new Error('Invalid file path.');
+      if (!absolute.startsWith(root + path.sep)) throw new Error(Message["file.path.invalid"]);
       await fs.unlink(absolute);
     }
   }
   return snapshot(root);
 }
 async function commit(root, input, profile) {
-  if (!input || typeof input.title !== 'string' || !input.title.trim() || typeof input.description !== 'string') throw new Error('Enter a commit title.');
+  if (!input || typeof input.title !== 'string' || !input.title.trim() || typeof input.description !== 'string') throw new Error(Message["commit.titleRequired"]);
   const state = await snapshot(root);
-  if (state.conflict || (await git(root, ['ls-files', '-u'])).trim()) throw new Error('Resolve all merge conflicts before committing.');
-  if (!state.staged.length && !state.mergePending) throw new Error('Stage at least one file before committing.');
+  if (state.conflict || (await git(root, ['ls-files', '-u'])).trim()) throw new Error(Message["commit.conflictsUnresolved"]);
+  if (!state.staged.length && !state.mergePending) throw new Error(Message["commit.stagedFilesRequired"]);
   await new Promise((resolve, reject) => execFile('git', ['-c', `user.name=${profile.username}`, '-c', `user.email=${profile.email}`, 'commit', '-m', input.title.trim(), ...(input.description.trim() ? ['-m', input.description.trim()] : [])], {
     cwd: root, windowsHide: true, timeout: 30000, maxBuffer: 8 * 1024 * 1024,
     env: { ...process.env, GIT_AUTHOR_NAME: profile.username, GIT_AUTHOR_EMAIL: profile.email, GIT_COMMITTER_NAME: profile.username, GIT_COMMITTER_EMAIL: profile.email, GIT_TERMINAL_PROMPT: '0' }
-  }, (error, _stdout, stderr) => error ? reject(new Error(stderr.trim() || 'Commit failed. Check Git configuration and commit hooks.')) : resolve()));
+  }, (error, _stdout, stderr) => error ? reject(new Error(stderr.trim() || Message["commit.failed"])) : resolve()));
   return snapshot(root);
 }
 module.exports = { git, openRepository, snapshot, commitDetails, diff, commits, createRepository, changeFiles, commit, correspondingRemote };

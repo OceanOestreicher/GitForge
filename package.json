@@ -18,8 +18,10 @@
   },
   "scripts": {
     "dev": "vite --host 127.0.0.1",
-    "build": "tsc --noEmit && vite build",
+    "build": "npm run build:messages && tsc --noEmit && vite build",
     "start": "npm run build && electron .",
-    "test": "playwright test"
+    "test": "playwright test",
+    "build:messages": "node scripts/build-messages.cjs",
+    "pretest": "npm run build:messages"
   }
 }

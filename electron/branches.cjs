@@ -1,25 +1,26 @@
+const { Message, addData } = require('../dist-electron/messages.cjs');
 const { git, snapshot } = require('./repository.cjs');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 
 const identity = profile => ['-c', `user.name=${profile.username}`, '-c', `user.email=${profile.email}`];
 const dirty = state => state.staged.length || state.unstaged.length;
-const invalidBranchName = 'The branch name is invalid. Branch names cannot contain spaces, control characters, or these characters: ~ ^ : ? * [ \\. They also cannot contain .., @{, or //; start or end with /; start with -; or end with a dot. Each slash-separated part cannot start with a dot or end with .lock. HEAD is reserved.';
+
 async function validateBranchName(root, value) {
-  if (typeof value !== 'string' || !value.trim()) throw new Error('Enter a branch name.');
+  if (typeof value !== 'string' || !value.trim()) throw new Error(Message["branch.name.required"]);
   const name = value.trim();
-  if (/\s/.test(name) || name.startsWith('-') || name === 'HEAD') throw new Error(invalidBranchName);
-  await git(root, ['check-ref-format', `refs/heads/${name}`]).catch(() => { throw new Error(invalidBranchName); });
+  if (/\s/.test(name) || name.startsWith('-') || name === 'HEAD') throw new Error(Message["branch.name.invalid"]);
+  await git(root, ['check-ref-format', `refs/heads/${name}`]).catch(() => { throw new Error(Message["branch.name.invalid"]); });
   return name;
 }
 async function head(root) { return (await git(root, ['rev-parse', '--verify', 'HEAD']).catch(() => '')).trim(); }
 async function attached(root) { return (await git(root, ['symbolic-ref', '--short', '-q', 'HEAD']).catch(() => '')).trim(); }
 async function idle(root) {
-  if (await git(root, ['rev-parse', '-q', '--verify', 'MERGE_HEAD']).catch(() => '')) throw new Error('Finish or abort the existing merge before continuing.');
-  if ((await git(root, ['ls-files', '-u'])).trim()) throw new Error('Resolve the existing conflicts before continuing.');
+  if (await git(root, ['rev-parse', '-q', '--verify', 'MERGE_HEAD']).catch(() => '')) throw new Error(Message["merge.pending"]);
+  if ((await git(root, ['ls-files', '-u'])).trim()) throw new Error(Message["conflict.unresolved"]);
 }
 async function commitHash(root, hash) {
-  if (typeof hash !== 'string' || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(hash)) throw new Error('Select a valid commit.');
+  if (typeof hash !== 'string' || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(hash)) throw new Error(Message["commit.selectionInvalid"]);
   return (await git(root, ['rev-parse', '--verify', `${hash}^{commit}`])).trim();
 }
 async function canReset(root, hash) {
@@ -27,16 +28,16 @@ async function canReset(root, hash) {
   return Boolean(await attached(root)) && await git(root, ['merge-base', '--is-ancestor', hash, 'HEAD']).then(() => true, () => false);
 }
 async function branchRef(root, ref) {
-  if (typeof ref !== 'string' || !/^refs\/(heads|remotes)\//.test(ref)) throw new Error('Select a local or remote branch.');
+  if (typeof ref !== 'string' || !/^refs\/(heads|remotes)\//.test(ref)) throw new Error(Message["branch.selectionRequired"]);
   const refs = (await git(root, ['for-each-ref', '--format=%(refname)', 'refs/heads', 'refs/remotes'])).trim().split('\n');
-  if (!refs.includes(ref)) throw new Error('This branch no longer exists.');
+  if (!refs.includes(ref)) throw new Error(Message["branch.notFound"]);
   return (await git(root, ['symbolic-ref', '-q', ref]).catch(() => '')).trim() || ref;
 }
 async function removeUntracked(root) {
   const state = await snapshot(root);
   for (const file of state.unstaged.filter(file => file.untracked)) {
     const absolute = path.resolve(root, file.path);
-    if (!absolute.startsWith(root + path.sep)) throw new Error('Invalid untracked file path.');
+    if (!absolute.startsWith(root + path.sep)) throw new Error(Message["file.untracked.pathInvalid"]);
     await fs.unlink(absolute);
   }
 }
@@ -47,7 +48,7 @@ async function discard(root) {
     await git(root, ['read-tree', '--empty']);
     for (const file of state.staged) {
       const absolute = path.resolve(root, file.path);
-      if (!absolute.startsWith(root + path.sep)) throw new Error('Invalid file path.');
+      if (!absolute.startsWith(root + path.sep)) throw new Error(Message["file.path.invalid"]);
       await fs.unlink(absolute).catch(error => { if (error.code !== 'ENOENT') throw error; });
     }
   }
@@ -57,12 +58,12 @@ async function stashEntries(root) {
   return (await git(root, ['stash', 'list', '--format=%H%x09%gd'])).trim().split('\n').filter(Boolean).map(line => { const [hash, ref] = line.split('\t'); return { hash, ref }; });
 }
 async function requireStash(root, hash) {
-  if (typeof hash !== 'string' || !(await stashEntries(root)).some(entry => entry.hash === hash)) throw new Error('The selected stash no longer exists.');
+  if (typeof hash !== 'string' || !(await stashEntries(root)).some(entry => entry.hash === hash)) throw new Error(Message["stash.notFound"]);
   return hash;
 }
 async function dropStash(root, hash) {
   const entry = (await stashEntries(root)).find(entry => entry.hash === hash);
-  if (!entry) throw new Error('The selected stash no longer exists.');
+  if (!entry) throw new Error(Message["stash.notFound"]);
   await git(root, ['stash', 'drop', entry.ref]);
 }
 async function cleanSavedUntracked(root, state, hash, selected) {
@@ -71,17 +72,17 @@ async function cleanSavedUntracked(root, state, hash, selected) {
   for (const file of state.unstaged.filter(file => file.untracked && (!selected || selected.includes(file.path)))) {
     await git(root, ['cat-file', '-e', `${hash}^3:${file.path}`]);
     const absolute = path.resolve(root, file.path);
-    if (!absolute.startsWith(root + path.sep)) throw new Error('Invalid untracked file path.');
+    if (!absolute.startsWith(root + path.sep)) throw new Error(Message["file.untracked.pathInvalid"]);
     await fs.unlink(absolute).catch(error => { if (error.code !== 'ENOENT') throw error; });
   }
 }
 async function stash(root, input, profile) {
   await idle(root);
-  if (!input || typeof input.name !== 'string' || !input.name.trim() || !Array.isArray(input.paths) || !input.paths.length) throw new Error('Select files and enter a stash name.');
-  if (!await head(root)) throw new Error('Create an initial commit before stashing changes.');
+  if (!input || typeof input.name !== 'string' || !input.name.trim() || !Array.isArray(input.paths) || !input.paths.length) throw new Error(Message["stash.inputRequired"]);
+  if (!await head(root)) throw new Error(Message["stash.initialCommitRequired"]);
   const state = await snapshot(root);
   const paths = [...new Set(input.paths)];
-  if (!paths.every(file => typeof file === 'string' && [...state.staged, ...state.unstaged].some(change => change.path === file))) throw new Error('The selected files changed. Select the files again.');
+  if (!paths.every(file => typeof file === 'string' && [...state.staged, ...state.unstaged].some(change => change.path === file))) throw new Error(Message["stash.filesChanged"]);
   const allPaths = [...new Set(paths.flatMap(file => {
     const changes = [...state.staged, ...state.unstaged].filter(change => change.path === file);
     return [file, ...changes.flatMap(change => change.oldPath ? [change.oldPath] : [])];
@@ -156,7 +157,7 @@ async function applyStash(root, input, profile) {
         return snapshot(root);
       }
       await require('./conflicts.cjs').restoreStashState(root, { originalWorkTree, originalIndex });
-      throw new Error('Git could not apply the stash. The previous working changes were restored and the stash was retained.');
+      throw new Error(Message["stash.apply.failed"]);
     }
     await git(root, ['read-tree', mergedIndex || originalIndex]);
     changedIndex = false;
@@ -169,7 +170,7 @@ async function applyStash(root, input, profile) {
         else await git(root, ['read-tree', originalIndex]);
       } catch {
         keepSafety = true;
-        throw new Error(`Stash application failed and the original changes could not be restored automatically. The stash and safety backup ${safetyRef} have been retained.`);
+        throw new Error(addData(Message["stash.apply.restoreFailed"], safetyRef));
       }
     }
     throw error;
@@ -186,15 +187,15 @@ async function switchBranch(root, input, profile) {
   await idle(root); const ref = await branchRef(root, input.ref);
   if (ref.startsWith('refs/remotes/')) {
     input = { ...input, name: await validateBranchName(root, input.name) };
-    if ((await git(root, ['for-each-ref', '--format=%(refname)', 'refs/heads'])).trim().split('\n').includes(`refs/heads/${input.name}`)) throw new Error('A local branch with this name already exists. Choose another name or check out the existing local branch.');
+    if ((await git(root, ['for-each-ref', '--format=%(refname)', 'refs/heads'])).trim().split('\n').includes(`refs/heads/${input.name}`)) throw new Error(Message["branch.name.exists"]);
   }
   const state = await snapshot(root), originalBranch = await attached(root), originalHead = await head(root);
   let savedStash;
   if (dirty(state)) {
-    if (!['discard', 'stash'].includes(input.strategy)) throw new Error('Choose whether to discard changes or stash and apply them on the new branch.');
+    if (!['discard', 'stash'].includes(input.strategy)) throw new Error(Message["branch.switch.strategyRequired"]);
     if (input.strategy === 'discard') await discard(root);
     else {
-      if (!originalHead) throw new Error('Create an initial commit before stashing changes.');
+      if (!originalHead) throw new Error(Message["stash.initialCommitRequired"]);
       await git(root, [...identity(profile), 'stash', 'push', '--include-untracked', '-m', 'GitForge branch switch']);
       savedStash = (await git(root, ['rev-parse', 'refs/stash'])).trim();
       await cleanSavedUntracked(root, state, savedStash);
@@ -208,8 +209,8 @@ async function switchBranch(root, input, profile) {
       try {
         await git(root, originalBranch ? ['switch', '--', originalBranch] : ['switch', '--detach', originalHead]);
         await git(root, ['stash', 'apply', '--index', savedStash]);
-      } catch { throw new Error('Branch switching failed. Your changes remain in the branch-switch stash; apply it after returning to the original branch.'); }
-      throw new Error('Changes could not be applied on the new branch. The original branch and working changes were restored; the stash was retained.');
+      } catch { throw new Error(Message["branch.switch.restoreFailed"]); }
+      throw new Error(Message["branch.switch.changesRestored"]);
     }
     throw error;
   }
@@ -219,19 +220,19 @@ async function createBranch(root, input) {
   await idle(root);
   const name = await validateBranchName(root, input?.name);
   const source = input.hash ? await commitHash(root, input.hash) : await branchRef(root, input.ref);
-  if (dirty(await snapshot(root))) throw new Error('Commit, stash, or discard working changes before creating and checking out a branch.');
+  if (dirty(await snapshot(root))) throw new Error(Message["branch.create.dirty"]);
   await git(root, ['switch', '--no-track', '-c', name, source]);
   return snapshot(root);
 }
 async function checkoutCommit(root, input) {
   await idle(root); const hash = await commitHash(root, input.hash);
-  if (dirty(await snapshot(root))) throw new Error('Commit, stash, or discard working changes before checking out a commit.');
+  if (dirty(await snapshot(root))) throw new Error(Message["commit.checkout.dirty"]);
   await git(root, ['switch', '--detach', hash]); return snapshot(root);
 }
 async function reset(root, input) {
   await idle(root); const hash = await commitHash(root, input.hash);
-  if (!await canReset(root, hash)) throw new Error('Only commits in the current local branch history can be used for reset.');
-  if (!['keep', 'discard'].includes(input.mode)) throw new Error('Choose whether to keep or discard changes.');
+  if (!await canReset(root, hash)) throw new Error(Message["branch.reset.commitNotInHistory"]);
+  if (!['keep', 'discard'].includes(input.mode)) throw new Error(Message["branch.reset.modeRequired"]);
   await git(root, ['reset', input.mode === 'keep' ? '--mixed' : '--hard', hash]);
   if (input.mode === 'discard') await removeUntracked(root);
   return snapshot(root);
@@ -239,9 +240,9 @@ async function reset(root, input) {
 async function merge(root, input, profile) {
   await idle(root); const ref = await branchRef(root, input.ref);
   const branch = await attached(root);
-  if (!branch) throw new Error('Check out a local branch before merging.');
-  if (ref === `refs/heads/${branch}`) throw new Error('Select a different branch to merge.');
-  if (dirty(await snapshot(root))) throw new Error('Commit, stash, or discard working changes before merging.');
+  if (!branch) throw new Error(Message["merge.localBranchRequired"]);
+  if (ref === `refs/heads/${branch}`) throw new Error(Message["merge.otherBranchRequired"]);
+  if (dirty(await snapshot(root))) throw new Error(Message["merge.dirty"]);
   const originalHead = await head(root);
   try { await git(root, [...identity(profile), '-c', 'merge.conflictStyle=merge', 'merge', '--ff', '--no-edit', ref]); }
   catch {
@@ -252,7 +253,7 @@ async function merge(root, input, profile) {
       }
       await git(root, ['merge', '--abort']);
     }
-    throw new Error('Git could not merge this branch. Check its history and Git hooks.');
+    throw new Error(Message["merge.failed"]);
   }
   return snapshot(root);
 }
@@ -260,10 +261,10 @@ async function drop(root, input) { await idle(root); await requireStash(root, in
 async function deleteRemoteBranch(root, input, _profile, credentials) {
   await idle(root);
   const ref = await branchRef(root, input.ref);
-  if (!ref.startsWith('refs/remotes/')) throw new Error('Select a remote branch to delete.');
+  if (!ref.startsWith('refs/remotes/')) throw new Error(Message["branch.delete.remoteRequired"]);
   const remotes = (await git(root, ['remote'])).trim().split('\n').filter(Boolean).sort((a, b) => b.length - a.length);
   const remote = remotes.find(name => ref.startsWith(`refs/remotes/${name}/`));
-  if (!remote) throw new Error('The selected remote no longer exists.');
+  if (!remote) throw new Error(Message["remote.notFound"]);
   const branch = ref.slice(`refs/remotes/${remote}/`.length);
   await require('./push.cjs').remoteGit(root, ['push', '--', remote, `:refs/heads/${branch}`], credentials, 'delete the remote branch');
   await git(root, ['update-ref', '-d', ref]);
@@ -274,11 +275,11 @@ async function deleteRemoteBranch(root, input, _profile, credentials) {
 async function deleteBranch(root, input, _profile, credentials) {
   await idle(root);
   const ref = await branchRef(root, input.ref);
-  if (!ref.startsWith('refs/heads/')) throw new Error('Select a local branch to delete.');
-  if (ref === `refs/heads/${await attached(root)}`) throw new Error('The checked-out branch cannot be deleted.');
+  if (!ref.startsWith('refs/heads/')) throw new Error(Message["branch.delete.localRequired"]);
+  if (ref === `refs/heads/${await attached(root)}`) throw new Error(Message["branch.delete.checkedOut"]);
   if (input.deleteRemote === true) {
     const remote = await require('./repository.cjs').correspondingRemote(root, ref.slice(11));
-    if (!remote || remote.ref !== input.remoteRef) throw new Error('The corresponding remote branch changed. Close this dialog and try again.');
+    if (!remote || remote.ref !== input.remoteRef) throw new Error(Message["branch.delete.remoteChanged"]);
     await require('./push.cjs').remoteGit(root, ['push', '--', remote.remote, `:${remote.branch}`], credentials, 'delete the remote branch');
     await git(root, ['update-ref', '-d', remote.ref]);
   }

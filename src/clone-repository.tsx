@@ -1,3 +1,4 @@
+import { Message } from './messages';
 import { useEffect, useRef, useState } from 'react';
 import type { Repository } from './repository';
 
@@ -16,13 +17,13 @@ export function CloneRepository({ onClose, onCloned }: { onClose: () => void; on
       event.preventDefault(); if (!url.trim() || !parentPath.trim() || submitting.current || browsing) return;
       submitting.current = true; setBusy(true); setError('');
       try { onCloned(await window.gitforge.cloneRepository({ url, parentPath })); }
-      catch (error) { setError(error instanceof Error ? error.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '') : 'Cloning failed. Please try again.'); setBusy(false); submitting.current = false; }
+      catch (error) { setError(error instanceof Error ? error.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '') : Message["clone.unexpectedFailure"]); setBusy(false); submitting.current = false; }
     }}>
       <label>GitHub HTTPS clone link<input autoFocus required value={url} disabled={busy} onChange={event => setUrl(event.target.value)} placeholder="https://github.com/owner/repository.git"/></label>
       <div className="parent-directory-field"><label htmlFor="clone-parent-directory">Parent directory</label><div className="directory-input"><input id="clone-parent-directory" required value={parentPath} disabled={busy} onChange={event => setParentPath(event.target.value)}/><button type="button" disabled={busy || browsing} onClick={async () => {
         setBrowsing(true);
         try { const folder = await window.gitforge.chooseParentDirectory(); if (folder !== null) setParentPath(folder); }
-        catch { setError('Could not open the folder picker. Enter the parent directory manually or try again.'); }
+        catch { setError(Message["directory.picker.failed"]); }
         finally { setBrowsing(false); }
       }}>Browse</button></div></div>
       {error && <p className="create-error" role="alert">{error}</p>}

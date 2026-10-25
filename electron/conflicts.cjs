@@ -1,3 +1,4 @@
+const { Message, addData } = require('../dist-electron/messages.cjs');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { randomUUID, createHash } = require('node:crypto');
@@ -9,15 +10,15 @@ async function load(root) { try { return JSON.parse(await fs.readFile(sessionPat
 async function save(root, session) { const target = sessionPath(root); await fs.writeFile(target + '.tmp', JSON.stringify(session)); await fs.rename(target + '.tmp', target); }
 async function blob(root, hash) {
   if (!hash) return null;
-  return new Promise((resolve, reject) => execFile('git', ['cat-file', 'blob', hash], { cwd: root, encoding: 'buffer', windowsHide: true, timeout: 30000, maxBuffer: 64 * 1024 * 1024 }, (error, stdout) => error ? reject(new Error('Could not read the conflicted file from Git.')) : resolve(stdout)));
+  return new Promise((resolve, reject) => execFile('git', ['cat-file', 'blob', hash], { cwd: root, encoding: 'buffer', windowsHide: true, timeout: 30000, maxBuffer: 64 * 1024 * 1024 }, (error, stdout) => error ? reject(new Error(Message["conflict.fileReadFailed"])) : resolve(stdout)));
 }
 async function safePath(root, file) {
   const absolute = path.resolve(root, file);
-  if (!absolute.startsWith(root + path.sep) || file.split(/[\\/]/).some(part => part.toLowerCase() === '.git')) throw new Error('Invalid conflict file path.');
+  if (!absolute.startsWith(root + path.sep) || file.split(/[\\/]/).some(part => part.toLowerCase() === '.git')) throw new Error(Message["conflict.pathInvalid"]);
   let parent = path.dirname(absolute);
   while (parent !== root) {
     const stat = await fs.lstat(parent).catch(error => { if (error.code !== 'ENOENT') throw error; return null; });
-    if (stat?.isSymbolicLink()) throw new Error('Resolve conflicts inside linked directories outside GitForge.');
+    if (stat?.isSymbolicLink()) throw new Error(Message["conflict.linkedDirectory"]);
     parent = path.dirname(parent);
   }
   return absolute;
@@ -38,7 +39,7 @@ function splitConflicts(text) {
   return parts.some(part => part.ours !== undefined) ? parts : [];
 }
 async function begin(root, options) {
-  if (await load(root)) throw new Error('Resolve or abort the current conflict session first.');
+  if (await load(root)) throw new Error(Message["conflict.sessionPending"]);
   const raw = await git(root, ['ls-files', '-u', '-z']);
   const groups = new Map();
   for (const entry of raw.split('\0').filter(Boolean)) {
@@ -46,7 +47,7 @@ async function begin(root, options) {
     if (!groups.has(file)) groups.set(file, {});
     groups.get(file)[stage] = { mode, hash };
   }
-  if (!groups.size) throw new Error('There are no unresolved Git conflicts.');
+  if (!groups.size) throw new Error(Message["conflict.noneFound"]);
   const session = { id: randomUUID(), ...options, files: [], steps: [], choices: [], indexState: raw };
   for (const [file, stages] of groups) {
     const absolute = await safePath(root, file);
@@ -86,15 +87,15 @@ async function restoreStashState(root, session) {
   await git(root, ['read-tree', session.originalIndex]);
   if (session.returnBranch) {
     const target = session.returnBranch.branch ? `refs/heads/${session.returnBranch.branch}` : session.returnBranch.head;
-    if ((await git(root, ['rev-parse', target])).trim() !== session.returnBranch.head) throw new Error('The original branch changed. Your branch-switch stash has been retained.');
+    if ((await git(root, ['rev-parse', target])).trim() !== session.returnBranch.head) throw new Error(Message["conflict.returnBranchChanged"]);
     await git(root, session.returnBranch.branch ? ['switch', '--', session.returnBranch.branch] : ['switch', '--detach', session.returnBranch.head]);
     await git(root, ['stash', 'apply', '--index', session.stashHash]);
   }
 }
 async function abort(root, input) {
   const session = await load(root);
-  if (!session || session.id !== input.id) throw new Error('This conflict session is no longer active.');
-  if ((await git(root, ['rev-parse', 'HEAD'])).trim() !== session.originalHead) throw new Error('HEAD changed outside GitForge. Inspect the repository before aborting.');
+  if (!session || session.id !== input.id) throw new Error(Message["conflict.sessionExpired"]);
+  if ((await git(root, ['rev-parse', 'HEAD'])).trim() !== session.originalHead) throw new Error(Message["conflict.headChanged"]);
   if (session.kind === 'stash') await restoreStashState(root, session);
   else await git(root, ['merge', '--abort']);
   await cleanup(root, session);
@@ -103,17 +104,17 @@ async function abort(root, input) {
 const both = (ours, theirs) => ours + (ours && theirs && !ours.endsWith('\n') ? (ours.includes('\r\n') ? '\r\n' : '\n') : '') + theirs;
 async function resolve(root, input) {
   const session = await load(root);
-  if (!session || session.id !== input.id || input.index !== session.choices.length) throw new Error('This conflict changed. Review the current conflict again.');
+  if (!session || session.id !== input.id || input.index !== session.choices.length) throw new Error(Message["conflict.choiceStale"]);
   const step = session.steps[session.choices.length];
-  if (!['ours', 'theirs', 'both'].includes(input.choice) || (input.choice === 'both' && !step.canBoth)) throw new Error('Choose which changes to keep.');
-  if ((await git(root, ['rev-parse', 'HEAD'])).trim() !== session.originalHead || await git(root, ['ls-files', '-u', '-z']) !== session.indexState) throw new Error('Git state changed outside GitForge. Abort or inspect the repository before resolving.');
+  if (!['ours', 'theirs', 'both'].includes(input.choice) || (input.choice === 'both' && !step.canBoth)) throw new Error(Message["conflict.choiceRequired"]);
+  if ((await git(root, ['rev-parse', 'HEAD'])).trim() !== session.originalHead || await git(root, ['ls-files', '-u', '-z']) !== session.indexState) throw new Error(Message["conflict.gitStateChanged"]);
   session.choices.push(input.choice);
   if (session.choices.length < session.steps.length) { await save(root, session); return require('./repository.cjs').snapshot(root); }
   for (const file of session.files) {
     const absolute = await safePath(root, file.path);
     const stat = await fs.lstat(absolute).catch(error => { if (error.code !== 'ENOENT') throw error; return null; });
     const buffer = stat?.isFile() ? await fs.readFile(absolute) : null;
-    if ((buffer ? digest(buffer) : null) !== file.contentHash) throw new Error(`${file.path} changed outside GitForge. Abort or inspect those edits before resolving.`);
+    if ((buffer ? digest(buffer) : null) !== file.contentHash) throw new Error(addData(Message["conflict.fileChanged"], file.path));
   }
   for (let fileIndex = 0; fileIndex < session.files.length; fileIndex++) {
     const file = session.files[fileIndex], absolute = await safePath(root, file.path);

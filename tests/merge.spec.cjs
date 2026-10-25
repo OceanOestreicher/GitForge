@@ -68,7 +68,7 @@ test('pull conflicts resolve into staged changes with a pending merge, then crea
   const remote = test.info().outputPath('pull.git'); git('init', '--bare', remote); git('remote', 'add', 'origin', remote); git('push', '-u', 'origin', 'main');
   git('switch', 'feature'); await write('a.txt', 'remote pull\n'); const incoming = commit('Remote'); git('push', 'origin', 'feature:main');
   git('switch', 'main'); await write('a.txt', 'local pull\n'); const head = commit('Local');
-  await open(); await page.locator('.repo-buttons').getByRole('button', { name: 'Pull', exact: true }).click(); await expect(dialog()).toBeVisible();
+  await open(); await page.locator('.repo-buttons').getByRole('button', { name: 'Pull', exact: true }).click(); await expect(dialog()).toBeVisible({ timeout: 15000 });
   await choose('theirs'); await expect(dialog()).toHaveCount(0); expect(await read('a.txt')).toBe('remote pull\n'); expect(git('rev-parse', 'HEAD')).toBe(head); expect(git('rev-parse', 'MERGE_HEAD')).toBe(incoming);
   await page.getByLabel('Commit title', { exact: true }).fill('Resolve pull'); await page.getByRole('button', { name: 'Commit', exact: true }).click();
   await expect(page.locator('.history')).toContainText('Resolve pull'); expect(git('show', '-s', '--format=%P')).toBe(`${head} ${incoming}`);

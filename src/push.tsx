@@ -1,3 +1,4 @@
+import { Message } from './messages';
 import { useEffect, useRef, useState } from 'react';
 import type { Repository } from './repository';
 export type PushPlan = { branch: string; target: string; remote: string; url: string; needsRepository: boolean; needsBranch: boolean; owner?: string; name?: string };
@@ -13,7 +14,7 @@ export function PushDialog({ plan, force, close, pushed }: { plan: PushPlan; for
   return <dialog className="create-dialog" ref={dialog} aria-labelledby="push-dialog-title" onCancel={event => { event.preventDefault(); if (!busy) close(); }}><header><h1 id="push-dialog-title">{force ? 'Confirm Force Push' : plan.needsRepository ? 'Create Remote Repository' : 'Create Remote Branch'}</h1></header><form onSubmit={async event => {
     event.preventDefault(); if (busy) return; setBusy(true); setError('');
     try { await pushed({ branch: plan.branch, force, confirmForce: force, createBranch: plan.needsBranch, createRepository: plan.needsRepository, owner, name, visibility }); }
-    catch (error) { setError(error instanceof Error ? error.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '') : 'Push failed.'); setBusy(false); }
+    catch (error) { setError(error instanceof Error ? error.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '') : Message["push.failed"]); setBusy(false); }
   }}>
     <p>Push {plan.branch} to {plan.remote}/{plan.target}.</p>
     {force && <p className="create-error">Force push can overwrite commits on the remote branch. Confirm that you want to replace the remote history with your local history.</p>}

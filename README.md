@@ -69,6 +69,15 @@ Conflict choices survive an application restart. Binary files and deletions can
 be resolved by keeping either full version. Fast-forward merges do not create an
 extra commit; conflict-free divergent merges create one automatically.
 
+## Error messages
+
+Maintain application error and warning text in `src/messages.ts`. Retrieve static
+messages with `Message['branch.name.invalid']`; fill numbered placeholders with
+`addData(Message['repository.create.failed'], details, directory)`. Keep wording
+in the catalog rather than at call sites. Build and test commands generate the
+CommonJS runtime copy in `dist-electron/messages.cjs` for Electron automatically;
+edit the TypeScript source only.
+
 ## Run
 
 ```powershell

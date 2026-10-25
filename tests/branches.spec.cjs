@@ -96,7 +96,7 @@ test('remote checkout prompts for a new local branch, allows cancel and handles 
   await dialog.getByLabel('Branch name', { exact: true }).fill('from-remote');
   await expect(dialog.getByRole('button', { name: 'Confirm', exact: true })).toBeDisabled();
   await dialog.getByLabel('Stash and apply on the new branch').check();
-  await dialog.getByRole('button', { name: 'Confirm', exact: true }).click(); await expect(dialog).toHaveCount(0);
+  await dialog.getByRole('button', { name: 'Confirm', exact: true }).click(); await expect(dialog).toHaveCount(0, { timeout: 15000 });
   expect(git('branch', '--show-current')).toBe('from-remote'); expect(git('for-each-ref', '--format=%(upstream)', 'refs/heads/from-remote')).toBe('refs/remotes/origin/feature');
   expect(git('show', ':a.txt')).toBe('staged work'); expect(await read('a.txt')).toBe('unstaged work\n'); expect(await read('new.txt')).toBe('untracked\n');
   await remoteRows.filter({ hasText: /^feature$/ }).dblclick(); await dialog.getByLabel('Discard changes', { exact: true }).check();

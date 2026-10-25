@@ -1,3 +1,4 @@
+import { Message } from './messages';
 import { useEffect, useRef, useState } from 'react';
 export type BranchAction = { action: string; ref?: string; hash?: string; name?: string; paths?: string[]; strategy?: string; mode?: string; deleteAfter?: boolean; deleteRemote?: boolean; remoteRef?: string };
 export type BranchPrompt = { kind: 'create' | 'reset' | 'switch' | 'stash' | 'apply-stash' | 'delete-stash' | 'delete-branch' | 'checkout-remote' | 'delete-remote-branch'; input: BranchAction; dirty?: boolean };
@@ -19,7 +20,7 @@ export function BranchDialog({ prompt, close, execute }: { prompt: BranchPrompt;
     event.preventDefault(); if (!complete || submitting.current) return;
     submitting.current = true; setBusy(true); setError('');
     try { await execute({ ...prompt.input, name, mode, strategy, deleteAfter, deleteRemote }); close(); }
-    catch (failure) { setError(failure instanceof Error ? failure.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '') : 'The operation failed.'); setBusy(false); submitting.current = false; }
+    catch (failure) { setError(failure instanceof Error ? failure.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '') : Message["operation.failed"]); setBusy(false); submitting.current = false; }
   }}>
     {prompt.kind === 'checkout-remote' && <p>Create and check out a local branch based on remote branch {prompt.input.ref?.slice(13).split('/').slice(1).join('/')}.</p>}
     {['create', 'stash', 'checkout-remote'].includes(prompt.kind) && <label>{prompt.kind === 'stash' ? 'Stash name' : 'Branch name'}<input autoFocus required disabled={busy} value={name} onChange={event => setName(event.target.value)}/></label>}

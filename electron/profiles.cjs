@@ -1,3 +1,4 @@
+const { Message } = require('../dist-electron/messages.cjs');
 const { DatabaseSync } = require('node:sqlite');
 const { randomUUID } = require('node:crypto');
 const path = require('node:path');
@@ -10,13 +11,13 @@ function createProfileStore(directory, safeStorage, verify) {
   if (!columns.includes('pat_invalid')) db.exec('ALTER TABLE profiles ADD COLUMN pat_invalid INTEGER NOT NULL DEFAULT 0');
   const list = () => db.prepare('SELECT id, name, username, email, active, pat_expires_at AS expiresAt, pat_invalid AS patInvalid FROM profiles').all().map(row => ({ ...row, active: Boolean(row.active), patInvalid: Boolean(row.patInvalid) })).sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
   const encrypt = pat => {
-    if (!safeStorage.isEncryptionAvailable()) throw new Error('Windows credential encryption is unavailable. Profile credentials could not be saved.');
+    if (!safeStorage.isEncryptionAvailable()) throw new Error(Message["profile.encryptionUnavailable"]);
     return safeStorage.encryptString(pat);
   };
   const validate = (input, creating) => {
-    if (!input || !['name', 'username', 'email', 'pat'].every(key => typeof input[key] === 'string')) throw new Error('Complete the profile form.');
+    if (!input || !['name', 'username', 'email', 'pat'].every(key => typeof input[key] === 'string')) throw new Error(Message["profile.form.incomplete"]);
     const result = { name: input.name.trim(), username: input.username.trim(), email: input.email.trim(), pat: input.pat };
-    if (!result.name || !result.username || !result.email || (creating && !result.pat.trim())) throw new Error('Complete the profile form.');
+    if (!result.name || !result.username || !result.email || (creating && !result.pat.trim())) throw new Error(Message["profile.form.incomplete"]);
     return result;
   };
   const transaction = work => {
@@ -24,7 +25,7 @@ function createProfileStore(directory, safeStorage, verify) {
     try { work(); db.exec('COMMIT'); } catch (error) { db.exec('ROLLBACK'); throw error; }
     return list();
   };
-  const exists = id => { if (typeof id !== 'string' || !db.prepare('SELECT id FROM profiles WHERE id=?').get(id)) throw new Error('The profile no longer exists.'); };
+  const exists = id => { if (typeof id !== 'string' || !db.prepare('SELECT id FROM profiles WHERE id=?').get(id)) throw new Error(Message["profile.notFound"]); };
   return {
     list,
     async refreshActive() {
@@ -42,9 +43,9 @@ function createProfileStore(directory, safeStorage, verify) {
     },
     credentials() {
       const profile = db.prepare('SELECT username,pat FROM profiles WHERE active=1').get();
-      if (!profile) throw new Error('Create and select a profile before cloning.');
+      if (!profile) throw new Error(Message["profile.cloneRequired"]);
       try { return { username: profile.username, pat: safeStorage.decryptString(Buffer.from(profile.pat)) }; }
-      catch { throw new Error('The active profile PAT could not be decrypted. Edit the profile and enter a new PAT.'); }
+      catch { throw new Error(Message["profile.pat.decryptFailed"]); }
     },
     async create(input) {
       const data = validate(input, true), encrypted = encrypt(data.pat);
@@ -56,7 +57,7 @@ function createProfileStore(directory, safeStorage, verify) {
       let pat = data.pat;
       if (!pat.trim()) {
         try { pat = safeStorage.decryptString(Buffer.from(db.prepare('SELECT pat FROM profiles WHERE id=?').get(id).pat)); }
-        catch { throw new Error('The saved PAT could not be decrypted. Enter a new PAT and try again.'); }
+        catch { throw new Error(Message["profile.pat.savedDecryptFailed"]); }
       }
       const status = await verify(data.username, pat);
       exists(id);

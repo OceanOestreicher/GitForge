@@ -1,3 +1,4 @@
+import { Message } from './messages';
 import { useEffect, useRef, useState } from 'react';
 import { parseDiff } from './diff';
 import { MergeConflicts, type Conflict } from './merge-conflicts';
@@ -119,7 +120,7 @@ export function RepositoryView({ initial, updated }: { initial: Repository; upda
     setPicked(previous => ({ ...previous, paths: previous.paths.filter(path => (previous.staged ? initial.staged : initial.unstaged).some(file => file.path === path)) }));
   }, [initial]);
   const executeBranch = async (input: BranchAction) => {
-    if (busy) throw new Error('Wait for the current operation to finish.');
+    if (busy) throw new Error(Message["operation.inProgress"]);
     setBusy(true); setError('');
     try { accept(await window.gitforge.branchAction(repo.path, input)); setSelected(null); setSelection(null); setPicked({ staged: false, paths: [] }); }
     finally { setBusy(false); }

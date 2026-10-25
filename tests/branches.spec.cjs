@@ -36,10 +36,16 @@ test('invalid branch names show plain-English errors and allow correction withou
   const form = page.getByRole('dialog', { name: 'Create Branch', exact: true });
   await form.getByLabel('Branch name', { exact: true }).fill('Merge 1'); await form.getByRole('button', { name: 'Create Branch', exact: true }).click();
   await expect(form.getByRole('alert')).toContainText('Branch names cannot contain spaces');
+  const rules = await form.getByRole('alert').textContent();
+  for (const character of ['~', '^', ':', '?', '*', '[', '\\', '..', '@{', '//', '.lock']) expect(rules).toContain(character);
   await expect(form.getByRole('alert')).not.toContainText('check-ref-format');
   expect(git('branch', '--show-current')).toBe('main'); expect(git('rev-parse', 'HEAD')).toBe(initial);
   await form.getByLabel('Branch name', { exact: true }).fill('bad..name'); await form.getByRole('button', { name: 'Create Branch', exact: true }).click();
   await expect(form.getByRole('alert')).toContainText('The branch name is invalid'); await expect(form.getByRole('alert')).not.toContainText('Command failed');
+  await expect(form.getByRole('alert')).toHaveText(rules);
+  for (const name of ['bad~name', 'bad^name', 'bad:name', 'bad?name', 'bad*name', 'bad[name', 'bad\\name', 'bad@{name', 'bad//name', '.hidden', 'name.lock', '-name', 'HEAD', 'bad.']) {
+    await expect(action({ action: 'create', ref: 'refs/heads/main', name })).rejects.toThrow(rules);
+  }
   await expect(action({ action: 'create', hash: initial, name: 'Merge 1' })).rejects.toThrow(/cannot contain spaces/);
   git('update-ref', 'refs/remotes/origin/main', initial);
   await expect(action({ action: 'switch', ref: 'refs/remotes/origin/main', name: 'Merge 1' })).rejects.toThrow(/cannot contain spaces/);

@@ -4,12 +4,12 @@ const path = require('node:path');
 
 const identity = profile => ['-c', `user.name=${profile.username}`, '-c', `user.email=${profile.email}`];
 const dirty = state => state.staged.length || state.unstaged.length;
+const invalidBranchName = 'The branch name is invalid. Branch names cannot contain spaces, control characters, or these characters: ~ ^ : ? * [ \\. They also cannot contain .., @{, or //; start or end with /; start with -; or end with a dot. Each slash-separated part cannot start with a dot or end with .lock. HEAD is reserved.';
 async function validateBranchName(root, value) {
   if (typeof value !== 'string' || !value.trim()) throw new Error('Enter a branch name.');
   const name = value.trim();
-  if (/\s/.test(name)) throw new Error('The branch name is invalid. Branch names cannot contain spaces. Use a name such as merge-1 instead.');
-  if (name.startsWith('-') || name === 'HEAD') throw new Error('The branch name is invalid. It cannot start with a hyphen or be named HEAD.');
-  await git(root, ['check-ref-format', `refs/heads/${name}`]).catch(() => { throw new Error('The branch name is invalid. Use a name such as merge-1 or feature/merge-1.'); });
+  if (/\s/.test(name) || name.startsWith('-') || name === 'HEAD') throw new Error(invalidBranchName);
+  await git(root, ['check-ref-format', `refs/heads/${name}`]).catch(() => { throw new Error(invalidBranchName); });
   return name;
 }
 async function head(root) { return (await git(root, ['rev-parse', '--verify', 'HEAD']).catch(() => '')).trim(); }

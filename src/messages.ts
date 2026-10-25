@@ -49,6 +49,7 @@ export const Message = Object.freeze({
   "conflict.headChanged": "HEAD changed outside GitForge. Inspect the repository before aborting.",
   "conflict.linkedDirectory": "Resolve conflicts inside linked directories outside GitForge.",
   "conflict.noneFound": "There are no unresolved Git conflicts.",
+  "conflict.outputInvalid": "The merge output could not be saved. Use a text file no larger than 8 MB and review the selected resolution.",
   "conflict.pathInvalid": "Invalid conflict file path.",
   "conflict.resolveOrAbortRequired": "Resolve or abort the current merge conflicts first.",
   "conflict.returnBranchChanged": "The original branch changed. Your branch-switch stash has been retained.",

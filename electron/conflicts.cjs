@@ -42,6 +42,13 @@ async function addPreviews(root, file, steps) {
   const ours = await blob(root, file.stages[2]?.hash), theirs = await blob(root, file.stages[3]?.hash);
   const previews = require('./conflict-preview.cjs').buildPreviews(file.parts, steps, ours, theirs);
   steps.forEach((step, index) => Object.assign(step, previews[index]));
+  const regular = Object.values(file.stages).every(entry => entry.mode !== '120000');
+  const readable = buffer => !buffer || (!buffer.includes(0) && buffer.length <= 8 * 1024 * 1024);
+  file.sources = {
+    editable: regular && readable(ours) && readable(theirs),
+    ours: { text: readable(ours) && ours ? ours.toString('utf8') : steps[0].ours, readable: Boolean(ours && readable(ours)) },
+    theirs: { text: readable(theirs) && theirs ? theirs.toString('utf8') : steps[0].theirs, readable: Boolean(theirs && readable(theirs)) }
+  };
 }
 async function begin(root, options) {
   if (await load(root)) throw new Error(Message["conflict.sessionPending"]);
@@ -76,8 +83,8 @@ async function begin(root, options) {
 async function status(root) {
   const session = await load(root); if (!session) return null;
   const current = session.steps[session.choices.length];
-  if (!current.oursLines) await addPreviews(root, session.files[current.fileIndex], session.steps.filter(step => step.fileIndex === current.fileIndex));
-  return { id: session.id, kind: session.kind, index: session.choices.length, total: session.steps.length, path: session.files[current.fileIndex].path, ours: current.ours, theirs: current.theirs, oursLines: current.oursLines, theirsLines: current.theirsLines, canBoth: current.canBoth };
+  if (!current.oursLines || !session.files[current.fileIndex].sources) await addPreviews(root, session.files[current.fileIndex], session.steps.filter(step => step.fileIndex === current.fileIndex));
+  return { id: session.id, kind: session.kind, index: session.choices.length, total: session.steps.length, path: session.files[current.fileIndex].path, ours: current.ours, theirs: current.theirs, oursLines: current.oursLines, theirsLines: current.theirsLines, canBoth: current.canBoth, file: require('./conflict-file.cjs').fileView(session, current.fileIndex) };
 }
 async function dropStash(root, hash) {
   if (!hash) return;
@@ -118,9 +125,16 @@ async function resolve(root, input) {
   const session = await load(root);
   if (!session || session.id !== input.id || input.index !== session.choices.length) throw new Error(Message["conflict.choiceStale"]);
   const step = session.steps[session.choices.length];
-  if (!['ours', 'theirs', 'both'].includes(input.choice) || (input.choice === 'both' && !step.canBoth)) throw new Error(Message["conflict.choiceRequired"]);
+  const currentFile = session.files[step.fileIndex];
+  if (input.resolveFile && input.output !== undefined) {
+    if (!currentFile.sources) await addPreviews(root, currentFile, session.steps.filter(item => item.fileIndex === step.fileIndex));
+    if (!currentFile.sources.editable || typeof input.output !== 'string' || Buffer.byteLength(input.output) > 8 * 1024 * 1024 || (input.deleteFile && (currentFile.parts.length || (currentFile.stages[2] && currentFile.stages[3]) || input.output))) throw new Error(Message['conflict.outputInvalid']);
+    currentFile.output = { text: input.output, deleted: input.deleteFile === true };
+  } else if (!['ours', 'theirs', 'both'].includes(input.choice) || (input.choice === 'both' && !step.canBoth)) throw new Error(Message["conflict.choiceRequired"]);
   if ((await git(root, ['rev-parse', 'HEAD'])).trim() !== session.originalHead || await git(root, ['ls-files', '-u', '-z']) !== session.indexState) throw new Error(Message["conflict.gitStateChanged"]);
-  session.choices.push(input.choice);
+  if (input.resolveFile) {
+    session.steps.forEach((item, index) => { if (item.fileIndex === step.fileIndex) session.choices[index] = currentFile.output ? 'custom' : input.choice; });
+  } else session.choices.push(input.choice);
   if (session.choices.length < session.steps.length) { await save(root, session); return require('./repository.cjs').snapshot(root); }
   for (const file of session.files) {
     const absolute = await safePath(root, file.path);
@@ -131,7 +145,17 @@ async function resolve(root, input) {
   for (let fileIndex = 0; fileIndex < session.files.length; fileIndex++) {
     const file = session.files[fileIndex], absolute = await safePath(root, file.path);
     const choices = session.steps.map((item, index) => ({ ...item, choice: session.choices[index] })).filter(item => item.fileIndex === fileIndex);
-    if (file.parts.length) {
+    if (file.output) {
+      if (file.output.deleted) {
+        await git(root, ['update-index', '--force-remove', '--', file.path]);
+        await fs.unlink(absolute).catch(error => { if (error.code !== 'ENOENT') throw error; });
+      } else {
+        const crlf = file.parts.some(part => /\r\n/.test(part.text || part.ours || part.theirs || '')) || /\r\n/.test(file.sources?.ours.text || file.sources?.theirs.text || '');
+        const text = file.output.text.replace(/\r\n/g, '\n');
+        await fs.writeFile(absolute, crlf ? text.replace(/\n/g, '\r\n') : text);
+        await git(root, ['add', '--', file.path]);
+      }
+    } else if (file.parts.length) {
       const text = file.parts.map((part, partIndex) => {
         if (part.text !== undefined) return part.text;
         const choice = choices.find(item => item.partIndex === partIndex).choice;

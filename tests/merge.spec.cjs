@@ -34,17 +34,25 @@ async function simpleConflict() {
 test('resolve multiple hunks and files with local/incoming/both, resume after restart, and commit the pending merge', async () => {
   const base = Array.from({ length: 40 }, (_, index) => `line ${index + 1}`);
   await write('a.txt', base.join('\n') + '\n'); commit('Base lines'); git('branch', '-f', 'feature', 'HEAD');
-  git('switch', 'feature'); const incomingLines = [...base]; incomingLines[2] = 'incoming first'; incomingLines[29] = 'incoming second';
+  git('switch', 'feature'); const incomingLines = [...base]; incomingLines[2] = 'incoming first\nincoming extra\nincoming another'; incomingLines[29] = 'incoming second';
   await write('a.txt', incomingLines.join('\n') + '\n'); await write('b.txt', 'incoming b\n'); await write('clean.txt', 'incoming automatic\n'); const incoming = commit('Incoming changes');
-  git('switch', 'main'); const localLines = [...base]; localLines[2] = 'local first'; localLines[29] = 'local second';
+  git('switch', 'main'); const localLines = [...base]; localLines[2] = 'local first\nlocal extra'; localLines[29] = 'local second';
   await write('a.txt', localLines.join('\n') + '\n'); await write('b.txt', 'local b\n'); const head = commit('Local changes');
   await open(); await page.locator('.sidebar-group').first().locator('.branch-row').filter({ hasText: /^feature/ }).click({ button: 'right' });
   await page.getByRole('menuitem', { name: 'Merge into current branch', exact: true }).click();
   await expect(dialog()).toContainText('Conflict 1 of 3'); await expect(dialog().getByRole('button', { name: 'Next Conflict' })).toBeDisabled();
   await expect(page.getByRole('region', { name: 'Current branch code', exact: true })).toContainText('local first');
   await expect(page.getByRole('region', { name: 'Incoming code', exact: true })).toContainText('incoming first');
+  const localCode = page.getByRole('region', { name: 'Current branch code', exact: true });
+  const incomingCode = page.getByRole('region', { name: 'Incoming code', exact: true });
+  await expect(localCode.locator('.merge-conflict-line').filter({ hasText: 'local first' }).locator('.merge-line-number')).toHaveText('3');
+  await expect(incomingCode.locator('.merge-conflict-line').filter({ hasText: 'incoming first' }).locator('.merge-line-number')).toHaveText('3');
+  await expect(localCode.locator('.merge-code-row:not(.merge-conflict-line)').filter({ hasText: 'line 1' }).locator('.merge-line-number')).toHaveText('1');
+  await expect(localCode.locator('.merge-code-row:not(.merge-conflict-line)').filter({ hasText: 'line 4' }).locator('.merge-line-number')).toHaveText('5');
   await page.screenshot({ path: test.info().outputPath('merge-conflicts.png') });
   await choose('ours', false); await expect(dialog()).toContainText('Conflict 2 of 3');
+  await expect(localCode.locator('.merge-conflict-line').filter({ hasText: 'local second' }).locator('.merge-line-number')).toHaveText('31');
+  await expect(incomingCode.locator('.merge-conflict-line').filter({ hasText: 'incoming second' }).locator('.merge-line-number')).toHaveText('32');
   await app.close(); app = await launchElectron(); page = await app.firstWindow(); await expect(dialog()).toContainText('Conflict 2 of 3');
   await expect(dialog().getByLabel('Keep local changes', { exact: true })).not.toBeChecked();
   await choose('both', false); await expect(dialog()).toContainText('Conflict 3 of 3'); await choose('theirs'); await expect(dialog()).toHaveCount(0);

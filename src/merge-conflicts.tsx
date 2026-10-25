@@ -1,7 +1,12 @@
 import { Message } from './messages';
 import { useEffect, useRef, useState } from 'react';
-export type Conflict = { id: string; kind: 'merge' | 'pull' | 'stash'; index: number; total: number; path: string; ours: string; theirs: string; canBoth: boolean };
+type ConflictLine = { text: string; number: number | null; conflict: boolean };
+export type Conflict = { id: string; kind: 'merge' | 'pull' | 'stash'; index: number; total: number; path: string; ours: string; theirs: string; oursLines: ConflictLine[]; theirsLines: ConflictLine[]; canBoth: boolean };
 export type ConflictAction = { action: 'abort' | 'resolve'; id: string; index?: number; choice?: 'ours' | 'theirs' | 'both' };
+
+function ConflictCode({ lines }: { lines: ConflictLine[] }) {
+  return <pre className="merge-code">{lines.map((line, index) => <span key={index} className={`merge-code-row${line.conflict ? ' merge-conflict-line' : ''}`}><span className="merge-line-number" aria-label="Line number">{line.number ?? ''}</span><span className="merge-line-text">{line.text || ' '}</span></span>)}</pre>;
+}
 
 export function MergeConflicts({ conflict, execute }: { conflict: Conflict; execute: (input: ConflictAction) => Promise<void> }) {
   const dialog = useRef<HTMLDialogElement>(null);
@@ -20,8 +25,8 @@ export function MergeConflicts({ conflict, execute }: { conflict: Conflict; exec
   return <dialog ref={dialog} className="merge-dialog" aria-labelledby="merge-title" onCancel={event => event.preventDefault()}>
     <header><h1 id="merge-title">Merge Conflicts</h1><p>{conflict.path} <span className="muted">Conflict {conflict.index + 1} of {conflict.total}</span></p></header>
     <div className="merge-panes">
-      <section aria-label="Current branch code"><h2>Current branch</h2><pre>{conflict.ours || '(No lines)'}</pre><label><input type="checkbox" disabled={busy} checked={ours} onChange={event => { setOurs(event.target.checked); if (event.target.checked && !conflict.canBoth) setTheirs(false); }}/>Keep local changes</label></section>
-      <section aria-label="Incoming code"><h2>{conflict.kind === 'stash' ? 'Stashed changes' : 'Incoming changes'}</h2><pre>{conflict.theirs || '(No lines)'}</pre><label><input type="checkbox" disabled={busy} checked={theirs} onChange={event => { setTheirs(event.target.checked); if (event.target.checked && !conflict.canBoth) setOurs(false); }}/>Keep incoming changes</label></section>
+      <section aria-label="Current branch code"><h2>Current branch</h2><ConflictCode lines={conflict.oursLines}/><label><input type="checkbox" disabled={busy} checked={ours} onChange={event => { setOurs(event.target.checked); if (event.target.checked && !conflict.canBoth) setTheirs(false); }}/>Keep local changes</label></section>
+      <section aria-label="Incoming code"><h2>{conflict.kind === 'stash' ? 'Stashed changes' : 'Incoming changes'}</h2><ConflictCode lines={conflict.theirsLines}/><label><input type="checkbox" disabled={busy} checked={theirs} onChange={event => { setTheirs(event.target.checked); if (event.target.checked && !conflict.canBoth) setOurs(false); }}/>Keep incoming changes</label></section>
     </div>
     {conflict.canBoth && <p className="merge-help">Select both to keep local changes followed by incoming changes.</p>}
     {error && <p className="create-error merge-error" role="alert">{error}</p>}

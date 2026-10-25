@@ -38,6 +38,11 @@ function splitConflicts(text) {
   if (start < lines.length) parts.push({ text: lines.slice(start).join('') });
   return parts.some(part => part.ours !== undefined) ? parts : [];
 }
+async function addPreviews(root, file, steps) {
+  const ours = await blob(root, file.stages[2]?.hash), theirs = await blob(root, file.stages[3]?.hash);
+  const previews = require('./conflict-preview.cjs').buildPreviews(file.parts, steps, ours, theirs);
+  steps.forEach((step, index) => Object.assign(step, previews[index]));
+}
 async function begin(root, options) {
   if (await load(root)) throw new Error(Message["conflict.sessionPending"]);
   const raw = await git(root, ['ls-files', '-u', '-z']);
@@ -65,12 +70,14 @@ async function begin(root, options) {
       session.steps.push({ fileIndex, ours: preview(ours), theirs: preview(theirs), canBoth: !binary && Boolean(ours && theirs) && !Object.values(stages).some(entry => entry.mode === '120000') });
     }
   }
+  for (let index = 0; index < session.files.length; index++) await addPreviews(root, session.files[index], session.steps.filter(step => step.fileIndex === index));
   await save(root, session);
 }
 async function status(root) {
   const session = await load(root); if (!session) return null;
   const current = session.steps[session.choices.length];
-  return { id: session.id, kind: session.kind, index: session.choices.length, total: session.steps.length, path: session.files[current.fileIndex].path, ours: current.ours, theirs: current.theirs, canBoth: current.canBoth };
+  if (!current.oursLines) await addPreviews(root, session.files[current.fileIndex], session.steps.filter(step => step.fileIndex === current.fileIndex));
+  return { id: session.id, kind: session.kind, index: session.choices.length, total: session.steps.length, path: session.files[current.fileIndex].path, ours: current.ours, theirs: current.theirs, oursLines: current.oursLines, theirsLines: current.theirsLines, canBoth: current.canBoth };
 }
 async function dropStash(root, hash) {
   if (!hash) return;

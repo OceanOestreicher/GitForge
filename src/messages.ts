@@ -1,5 +1,8 @@
 /** User-facing error and warning messages shared by React and Electron. */
 export const Message = Object.freeze({
+  'conflict.abortTitle': 'Abort Merge?',
+  'conflict.abortConfirmation': 'Abort this merge and discard your merge resolution changes? The branch will return to its state before the merge.',
+
   "branch.create.dirty": "Commit, stash, or discard working changes before creating and checking out a branch.",
   "branch.delete.checkedOut": "The checked-out branch cannot be deleted.",
   "branch.delete.localRequired": "Select a local branch to delete.",

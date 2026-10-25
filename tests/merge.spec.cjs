@@ -10,6 +10,7 @@ const write = (file, value) => fs.writeFile(path.join(root, file), value);
 const read = async file => (await fs.readFile(path.join(root, file), 'utf8')).replace(/\r\n/g, '\n');
 const commit = message => { git('add', '.'); git('commit', '-m', message); return git('rev-parse', 'HEAD'); };
 const action = input => page.evaluate(({ root, input }) => window.gitforge.branchAction(root, input), { root, input });
+async function confirmAbort(response = 1) { await app.evaluate(({ dialog }, response) => { dialog.showMessageBox = async () => ({ response }); }, response); }
 const dialog = () => page.getByRole('dialog', { name: 'Merge Conflicts', exact: true });
 test.beforeEach(async () => {
   root = await fs.mkdtemp(path.join(os.tmpdir(), 'gitforge-merge-')); git('init', '-b', 'main');
@@ -78,7 +79,9 @@ test('abort after advancing a conflict restores the original branch, files and i
   git('switch', 'feature'); await write('a.txt', 'incoming a\n'); await write('b.txt', 'incoming b\n'); await write('clean.txt', 'incoming automatic\n'); commit('Incoming');
   git('switch', 'main'); await write('a.txt', 'local a\n'); await write('b.txt', 'local b\n'); const head = commit('Local');
   await open(); await action({ action: 'merge', ref: 'refs/heads/feature' }); await choose('theirs', false); await expect(dialog()).toContainText('File 2 of 2');
-  await dialog().getByRole('button', { name: 'Abort Merge' }).click(); await expect(dialog()).toHaveCount(0);
+  await confirmAbort(0); await dialog().getByRole('button', { name: 'Abort Merge' }).click();
+  await expect(dialog()).toContainText('File 2 of 2'); expect(git('rev-parse', 'MERGE_HEAD')).toBeTruthy();
+  await confirmAbort(); await dialog().getByRole('button', { name: 'Abort Merge' }).click(); await expect(dialog()).toHaveCount(0);
   expect(git('rev-parse', 'HEAD')).toBe(head); expect(git('status', '--porcelain')).toBe(''); expect(await read('a.txt')).toBe('local a\n'); expect(await read('b.txt')).toBe('local b\n'); expect(await read('clean.txt')).toBe('base\n');
 });
 
@@ -134,7 +137,7 @@ for (const choice of ['ours', 'theirs']) test(`abort a resolved merge from Worki
   } else expect(git('diff', '--cached', '--name-only')).toBe('a.txt');
   const abort = page.locator('.commit-actions').getByRole('button', { name: 'Abort Merge', exact: true });
   await expect(abort).toBeVisible(); await expect(abort).toBeEnabled();
-  await abort.click(); await expect(abort).toHaveCount(0);
+  await confirmAbort(); await abort.click(); await expect(abort).toHaveCount(0);
   expect(git('rev-parse', 'HEAD')).toBe(head); expect(git('status', '--porcelain')).toBe(''); expect(await read('a.txt')).toBe('local\n');
   await expect(page.getByRole('button', { name: 'Commit', exact: true })).toBeDisabled();
   await expect(page.evaluate(root => window.gitforge.conflictAction(root, { action: 'abort' }), root)).rejects.toThrow(/no pending merge/);
@@ -143,7 +146,7 @@ for (const choice of ['ours', 'theirs']) test(`abort a resolved merge from Worki
 test('outside edits are not overwritten when resolving a conflict', async () => {
   await simpleConflict(); await open(); await action({ action: 'merge', ref: 'refs/heads/feature' });
   await write('a.txt', 'outside edits\n'); await choose('theirs'); await expect(dialog().getByRole('alert')).toContainText('changed outside GitForge'); expect(await read('a.txt')).toBe('outside edits\n');
-  await dialog().getByRole('button', { name: 'Abort Merge' }).click(); await expect(dialog()).toHaveCount(0); expect(await read('a.txt')).toBe('local\n');
+  await confirmAbort(); await dialog().getByRole('button', { name: 'Abort Merge' }).click(); await expect(dialog()).toHaveCount(0); expect(await read('a.txt')).toBe('local\n');
 });
 
 test('manual output edits and deletions survive select-all toggles and are saved exactly', async () => {
@@ -191,7 +194,7 @@ test('conflict navigation scrolls all panes, wraps within the file, and preserve
   await open(); await action({ action: 'merge', ref: 'refs/heads/feature' });
   const output = dialog().getByRole('textbox', { name: 'Merge output' });
   const visibleAt = async (position, selected = false) => {
-    await expect(dialog().getByLabel('Conflict navigation')).toContainText(`Conflict ${position + 1} of 2`);
+    await expect(dialog().locator('header')).toContainText(`Conflict ${position + 1} of 2`);
     for (const side of ['Current branch code', 'Incoming code']) {
       const pane = dialog().getByRole('region', { name: side, exact: true }).locator('pre');
       await expect.poll(() => pane.evaluate((element, position) => {

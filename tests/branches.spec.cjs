@@ -248,6 +248,7 @@ test('stash application conflict restores preexisting staged, unstaged and untra
   await write('b.txt', 'staged\n'); git('add', 'b.txt'); await write('b.txt', 'unstaged\n'); await write('new.txt', 'safe\n');
   const before = git('status', '--porcelain');
   await action({ action: 'apply-stash', hash, deleteAfter: true });
+  await app.evaluate(({ dialog }) => { dialog.showMessageBox = async () => ({ response: 1 }); });
   await page.getByRole('button', { name: 'Abort Merge', exact: true }).click(); await expect(page.getByRole('dialog', { name: 'Merge Conflicts' })).toHaveCount(0);
   expect(git('status', '--porcelain')).toBe(before); expect(git('show', ':b.txt')).toBe('staged'); expect(await read('b.txt')).toBe('unstaged\n'); expect(await read('new.txt')).toBe('safe\n');
   expect(git('stash', 'list', '--format=%H')).toBe(hash); expect(git('ls-files', '-u')).toBe('');
@@ -263,6 +264,7 @@ test('branch merges fast-forward, create divergent merge commits, and abort conf
   await write('a.txt', 'main conflict\n'); git('add', '.'); git('commit', '-m', 'Main conflict'); const before = git('rev-parse', 'HEAD');
   await action({ action: 'switch', ref: 'refs/heads/feature' }); await write('a.txt', 'other conflict\n'); git('add', '.'); git('commit', '-m', 'Feature conflict');
   await action({ action: 'switch', ref: 'refs/heads/main' }); await action({ action: 'merge', ref: 'refs/heads/feature' });
+  await app.evaluate(({ dialog }) => { dialog.showMessageBox = async () => ({ response: 1 }); });
   await page.getByRole('button', { name: 'Abort Merge', exact: true }).click(); await expect(page.getByRole('dialog', { name: 'Merge Conflicts' })).toHaveCount(0);
   expect(git('rev-parse', 'HEAD')).toBe(before); expect(git('status', '--porcelain')).toBe(''); expect(await read('a.txt')).toMatch(/^main conflict\r?\n$/);
 });
@@ -299,6 +301,7 @@ test('failed stash-and-switch restores original branch and changes and keeps a r
   git('switch', 'feature'); await write('a.txt', 'incompatible branch\n'); git('add', '.'); git('commit', '-m', 'Incompatible'); git('switch', 'main');
   await write('a.txt', 'local work\n'); await write('new.txt', 'untracked\n'); const before = git('status', '--porcelain');
   await action({ action: 'switch', ref: 'refs/heads/feature', strategy: 'stash' });
+  await app.evaluate(({ dialog }) => { dialog.showMessageBox = async () => ({ response: 1 }); });
   await page.getByRole('button', { name: 'Abort Merge', exact: true }).click(); await expect(page.getByRole('dialog', { name: 'Merge Conflicts' })).toHaveCount(0);
   expect(git('branch', '--show-current')).toBe('main'); expect(git('status', '--porcelain')).toBe(before);
   expect(await read('a.txt')).toBe('local work\n'); expect(await read('new.txt')).toBe('untracked\n'); expect(git('stash', 'list')).toContain('GitForge branch switch');

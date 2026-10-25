@@ -1,6 +1,6 @@
 import { Message } from './messages';
 import { useEffect, useRef, useState } from 'react';
-import { editOutput, generateOutput, initialSelections, outputText, updateSelections, type MergeFile, type Output, type Selections, type SourceLine } from './merge-output';
+import { conflictOutputLine, editOutput, generateOutput, initialSelections, outputText, updateSelections, type MergeFile, type Output, type Selections, type SourceLine } from './merge-output';
 
 export type Conflict = { id: string; kind: 'merge' | 'pull' | 'stash'; index: number; total: number; path: string; file: MergeFile };
 export type ConflictAction = { action: 'abort' | 'resolve'; id?: string; index?: number; choice?: 'ours' | 'theirs' | 'both'; resolveFile?: boolean; output?: string; deleteFile?: boolean };
@@ -10,17 +10,31 @@ function SelectAll({ label, checked, partial, disabled, change }: { label: strin
   useEffect(() => { if (input.current) input.current.indeterminate = partial; }, [partial]);
   return <label className="merge-select-all"><input ref={input} type="checkbox" aria-label={label} checked={checked} disabled={disabled} onChange={event => change(event.target.checked)}/>Select all</label>;
 }
-function SourceCode({ rows, side, selections, disabled, change }: { rows: SourceLine[]; side: 'ours' | 'theirs'; selections: Selections; disabled: boolean; change: (region: number, line: number, value: boolean) => void }) {
-  return <pre className="merge-code">{rows.map((row, index) => <span key={index} className={`merge-code-row${row.region !== undefined ? ' merge-conflict-line' : ''}`}>
+function SourceCode({ rows, side, selections, disabled, change, region }: { region: number; rows: SourceLine[]; side: 'ours' | 'theirs'; selections: Selections; disabled: boolean; change: (region: number, line: number, value: boolean) => void }) {
+  const code = useRef<HTMLPreElement>(null);
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => {
+    const pane = code.current, target = pane?.querySelector<HTMLElement>(`[data-region="${region}"]`);
+    if (pane && target) pane.scrollTop += target.getBoundingClientRect().top - pane.getBoundingClientRect().top - 26;
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [region]);
+  return <pre ref={code} className="merge-code">{rows.map((row, index) => <span key={index} data-region={row.region} className={`merge-code-row${row.region !== undefined ? ' merge-conflict-line' : ''}`}>
     <span className="merge-line-choice">{row.region !== undefined && <input type="checkbox" aria-label={`Keep ${side === 'ours' ? 'local' : 'incoming'} ${row.number !== null ? `line ${row.number}` : `change ${row.region + 1}`}`} disabled={disabled} checked={Boolean(selections[row.region][side][row.line || 0])} onChange={event => change(row.region!, row.line || 0, event.target.checked)}/>}</span>
     <span className="merge-line-number" aria-label="Line number">{row.number ?? ''}</span><span className="merge-line-text">{row.text || ' '}</span>
   </span>)}</pre>;
 }
-function OutputEditor({ output, disabled, change }: { output: Output; disabled: boolean; change: (value: string) => void }) {
+function OutputEditor({ output, disabled, change, region, targetLine }: { region: number; targetLine: number; output: Output; disabled: boolean; change: (value: string) => void }) {
   const background = useRef<HTMLPreElement>(null), numbers = useRef<HTMLDivElement>(null), input = useRef<HTMLTextAreaElement>(null);
   const rows = output.ending || !output.rows.length ? [...output.rows, { text: '', conflict: false }] : output.rows;
   const sync = () => { if (input.current && background.current && numbers.current) { background.current.style.transform = `translate(${-input.current.scrollLeft}px, ${-input.current.scrollTop}px)`; numbers.current.style.transform = `translateY(${-input.current.scrollTop}px)`; } };
   useEffect(sync, [output]);
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => {
+      if (input.current) { input.current.scrollTop = Math.max(0, targetLine * 20 - 20); sync(); }
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [region]);
   return <div className="merge-output-editor">
     <div className="merge-output-gutter" aria-hidden="true"><div ref={numbers}>{rows.map((_, index) => <div key={index}>{index + 1}</div>)}</div></div>
     <div className="merge-output-surface"><pre ref={background} className="merge-output-highlights" aria-hidden="true">{rows.map((row, index) => <span key={index} className={row.conflict ? 'merge-conflict-line' : ''}>{row.text || ' '}</span>)}</pre>
@@ -31,6 +45,8 @@ function OutputEditor({ output, disabled, change }: { output: Output; disabled: 
 
 function FileResolution({ conflict, execute }: { conflict: Conflict; execute: (input: ConflictAction) => Promise<void> }) {
   const file = conflict.file;
+  const [active, setActive] = useState(0);
+  const region = file.regions[active].id;
   const [state, setState] = useState(() => { const selections = initialSelections(file); return { selections, output: generateOutput(file, selections), edited: false }; });
   const [busy, setBusy] = useState(false), [error, setError] = useState(''); const working = useRef(false);
   const select = (side: 'ours' | 'theirs', value: boolean, region?: number, line?: number) => setState(previous => {
@@ -55,11 +71,11 @@ function FileResolution({ conflict, execute }: { conflict: Conflict; execute: (i
   return <>
     <div className="merge-panes merge-file-sources">{(['ours', 'theirs'] as const).map(side => {
       const values = file.regions.flatMap(region => state.selections[region.id][side]);
-      return <section key={side} aria-label={side === 'ours' ? 'Current branch code' : 'Incoming code'}><div className="merge-source-heading"><span className={`merge-side-badge ${side}`}>{side === 'ours' ? 'A' : 'B'}</span><h2>{side === 'ours' ? 'Current branch' : conflict.kind === 'stash' ? 'Stashed changes' : 'Incoming changes'}</h2><SelectAll label={`Select all ${side === 'ours' ? 'local' : 'incoming'} changes`} checked={values.every(Boolean)} partial={values.some(Boolean) && !values.every(Boolean)} disabled={busy} change={value => select(side, value)}/></div><SourceCode rows={side === 'ours' ? file.oursRows : file.theirsRows} side={side} selections={state.selections} disabled={busy} change={(region, line, value) => select(side, value, region, line)}/></section>;
+      return <section key={side} aria-label={side === 'ours' ? 'Current branch code' : 'Incoming code'}><div className="merge-source-heading"><span className={`merge-side-badge ${side}`}>{side === 'ours' ? 'A' : 'B'}</span><h2>{side === 'ours' ? 'Current branch' : conflict.kind === 'stash' ? 'Stashed changes' : 'Incoming changes'}</h2><SelectAll label={`Select all ${side === 'ours' ? 'local' : 'incoming'} changes`} checked={values.every(Boolean)} partial={values.some(Boolean) && !values.every(Boolean)} disabled={busy} change={value => select(side, value)}/></div><SourceCode region={region} rows={side === 'ours' ? file.oursRows : file.theirsRows} side={side} selections={state.selections} disabled={busy} change={(region, line, value) => select(side, value, region, line)}/></section>;
     })}</div>
-    <section className="merge-output-section" aria-label="Resolved file output"><div className="merge-output-heading"><h2>Output</h2><span className="muted">{file.editable ? 'Editable · local lines first, incoming lines below' : 'Choose a complete version of this file'}</span></div><OutputEditor output={state.output} disabled={busy || !file.editable} change={value => setState(previous => ({ ...previous, edited: true, output: editOutput(previous.output, value) }))}/></section>
+    <section className="merge-output-section" aria-label="Resolved file output"><div className="merge-output-heading"><h2>Output</h2><span className="muted">{file.editable ? 'Editable · local lines first, incoming lines below' : 'Choose a complete version of this file'}</span></div><OutputEditor region={region} targetLine={conflictOutputLine(file, state.output, region)} output={state.output} disabled={busy || !file.editable} change={value => setState(previous => ({ ...previous, edited: true, output: editOutput(previous.output, value) }))}/></section>
     {error && <p className="create-error merge-error" role="alert">{error}</p>}
-    <footer><button disabled={busy} onClick={() => void run('abort')}>Abort Merge</button><button disabled={busy || !complete} onClick={() => void run('resolve')}>{file.index + 1 < file.total ? 'Next Conflict' : 'Resolve'}</button></footer>
+    <footer><nav className="merge-conflict-navigation" aria-label="Conflict navigation"><button aria-label="Previous Conflict" title="Previous Conflict" disabled={busy || file.regions.length < 2} onClick={() => setActive(value => (value + file.regions.length - 1) % file.regions.length)}>?</button><span aria-live="polite">Conflict {active + 1} of {file.regions.length}</span><button aria-label="Next Conflict" title="Next Conflict" disabled={busy || file.regions.length < 2} onClick={() => setActive(value => (value + 1) % file.regions.length)}>?</button></nav><button disabled={busy} onClick={() => void run('abort')}>Abort Merge</button><button disabled={busy || !complete} onClick={() => void run('resolve')}>{file.index + 1 < file.total ? 'Next File' : 'Resolve'}</button></footer>
   </>;
 }
 

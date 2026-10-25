@@ -42,6 +42,19 @@ export function generateOutput(file: MergeFile, selections: Selections): Output 
 }
 export function outputText(output: Output): string { return output.rows.map(row => row.text).join('\n') + (output.ending && output.rows.length ? '\n' : ''); }
 
+export function conflictOutputLine(file: MergeFile, output: Output, region: number): number {
+  const start = file.parts.findIndex(part => part.region === region);
+  // A conflict with no selected lines occupies the insertion point before its next surviving part.
+  for (let index = start; index < file.parts.length; index++) {
+    const part = file.parts[index];
+    const line = output.rows.findIndex(row => part.region !== undefined
+      ? row.key.startsWith(`ours:${part.region}:`) || row.key.startsWith(`theirs:${part.region}:`)
+      : row.key.startsWith(`context:${index}:`));
+    if (line >= 0) return line;
+  }
+  return output.rows.length;
+}
+
 /** Track edited line identities so later source selections preserve manual text. */
 export function editOutput(output: Output, text: string): Output {
   const next = splitLines(text); let prefix = 0, suffix = 0, nextId = output.nextId;

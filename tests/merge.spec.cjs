@@ -24,7 +24,7 @@ async function open() {
 async function choose(choice, last = true) {
   if (choice !== 'theirs') await dialog().getByLabel('Select all local changes', { exact: true }).check();
   if (choice !== 'ours') await dialog().getByLabel('Select all incoming changes', { exact: true }).check();
-  await dialog().getByRole('button', { name: last ? 'Resolve' : 'Next Conflict', exact: true }).click();
+  await dialog().getByRole('button', { name: last ? 'Resolve' : 'Next File', exact: true }).click();
 }
 async function simpleConflict() {
   git('switch', 'feature'); await write('a.txt', 'incoming\n'); const incoming = commit('Incoming');
@@ -40,7 +40,7 @@ test('resolve multiple hunks and files with local/incoming/both, resume after re
   await write('a.txt', localLines.join('\n') + '\n'); await write('b.txt', 'local b\n'); const head = commit('Local changes');
   await open(); await page.locator('.sidebar-group').first().locator('.branch-row').filter({ hasText: /^feature/ }).click({ button: 'right' });
   await page.getByRole('menuitem', { name: 'Merge into current branch', exact: true }).click();
-  await expect(dialog()).toContainText('File 1 of 2'); await expect(dialog().getByRole('button', { name: 'Next Conflict' })).toBeDisabled();
+  await expect(dialog()).toContainText('File 1 of 2'); await expect(dialog().getByRole('button', { name: 'Next File' })).toBeDisabled();
   await expect(page.getByRole('region', { name: 'Current branch code', exact: true })).toContainText('local first');
   await expect(page.getByRole('region', { name: 'Incoming code', exact: true })).toContainText('incoming first');
   const localCode = page.getByRole('region', { name: 'Current branch code', exact: true });
@@ -62,7 +62,7 @@ test('resolve multiple hunks and files with local/incoming/both, resume after re
   await expect(output).toHaveValue(/local second\nincoming second/);
   await expect(output).toHaveValue(/manually edited local first/); await expect(output).toHaveValue(/manual middle/);
   await page.screenshot({ path: test.info().outputPath('merge-conflicts.png') });
-  await dialog().getByRole('button', { name: 'Next Conflict', exact: true }).click(); await expect(dialog()).toContainText('File 2 of 2');
+  await dialog().getByRole('button', { name: 'Next File', exact: true }).click(); await expect(dialog()).toContainText('File 2 of 2');
   await app.close(); app = await launchElectron(); page = await app.firstWindow(); await expect(dialog()).toContainText('File 2 of 2');
   await expect(dialog().getByLabel('Select all local changes', { exact: true })).not.toBeChecked();
   await choose('theirs'); await expect(dialog()).toHaveCount(0);
@@ -178,4 +178,42 @@ test('individual incoming lines can be selected against a deletion while keeping
   const output = dialog().getByRole('textbox', { name: 'Merge output', exact: true }); await expect(output).toHaveValue('before\nincoming one\nafter\n');
   await dialog().getByRole('button', { name: 'Resolve', exact: true }).click(); await expect(dialog()).toHaveCount(0);
   expect(await read('a.txt')).toBe('before\nincoming one\nafter\n');
+});
+
+
+test('conflict navigation scrolls all panes, wraps within the file, and preserves output edits', async () => {
+  const base = Array.from({ length: 120 }, (_, index) => `context ${index + 1}`);
+  await write('a.txt', base.join('\n') + '\n'); commit('Long base'); git('branch', '-f', 'feature', 'HEAD');
+  git('switch', 'feature'); const incoming = [...base]; incoming[29] = 'incoming first'; incoming[89] = 'incoming last';
+  await write('a.txt', incoming.join('\n') + '\n'); commit('Incoming');
+  git('switch', 'main'); const local = [...base]; local[29] = 'local first'; local[89] = 'local last';
+  await write('a.txt', local.join('\n') + '\n'); commit('Local');
+  await open(); await action({ action: 'merge', ref: 'refs/heads/feature' });
+  const output = dialog().getByRole('textbox', { name: 'Merge output' });
+  const visibleAt = async (position, selected = false) => {
+    await expect(dialog().getByLabel('Conflict navigation')).toContainText(`Conflict ${position + 1} of 2`);
+    for (const side of ['Current branch code', 'Incoming code']) {
+      const pane = dialog().getByRole('region', { name: side, exact: true }).locator('pre');
+      await expect.poll(() => pane.evaluate((element, position) => {
+        const row = [...element.querySelectorAll('.merge-conflict-line')][position];
+        const view = element.getBoundingClientRect(), target = row.getBoundingClientRect();
+        return element.scrollTop > 0 && target.top >= view.top && target.bottom <= view.bottom;
+      }, position)).toBe(true);
+    }
+    await expect.poll(() => output.evaluate((element, line) => {
+      const y = 10 + line * 20 - element.scrollTop;
+      return element.scrollTop > 0 && y >= 0 && y < element.clientHeight;
+    }, position === 0 ? 29 : selected ? 89 : 88)).toBe(true);
+  };
+  await visibleAt(0);
+  await dialog().getByRole('button', { name: 'Previous Conflict', exact: true }).click(); await visibleAt(1);
+  await dialog().getByRole('button', { name: 'Next Conflict', exact: true }).click(); await visibleAt(0);
+  await dialog().getByLabel('Select all local changes', { exact: true }).check();
+  await output.fill((await output.inputValue()).replace('local last', 'manually edited last'));
+  const edited = await output.inputValue();
+  await dialog().getByRole('button', { name: 'Next Conflict', exact: true }).click(); await visibleAt(1, true);
+  await dialog().getByRole('button', { name: 'Next Conflict', exact: true }).click(); await visibleAt(0, true);
+  await expect(output).toHaveValue(edited);
+  await dialog().getByRole('button', { name: 'Resolve', exact: true }).click(); await expect(dialog()).toHaveCount(0);
+  expect(await read('a.txt')).toBe(edited);
 });

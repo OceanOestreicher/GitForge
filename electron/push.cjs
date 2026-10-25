@@ -18,8 +18,9 @@ function githubLocation(url) {
   const match = /^https:\/\/github\.com\/([\w.-]+)\/([\w.-]+?)(?:\.git)?\/?$/.exec(url);
   return match ? { owner: match[1], name: match[2] } : null;
 }
-async function destination(root, credentials) {
-  const branch = (await git(root, ['symbolic-ref', '--short', '-q', 'HEAD']).catch(() => '')).trim();
+async function destination(root, credentials, selectedBranch) {
+  const branch = selectedBranch ?? (await git(root, ['symbolic-ref', '--short', '-q', 'HEAD']).catch(() => '')).trim();
+  if (selectedBranch !== undefined && (typeof branch !== 'string' || !(await git(root, ['for-each-ref', '--format=%(refname)', 'refs/heads'])).trim().split('\n').includes(`refs/heads/${branch}`))) throw new Error('Select an existing local branch.');
   if (!branch) throw new Error('Check out a branch before pushing; HEAD is detached.');
   if (!await git(root, ['rev-parse', '--verify', 'HEAD']).catch(() => '')) throw new Error('Create a commit before pushing.');
   const remotes = (await git(root, ['remote'])).trim().split('\n').filter(Boolean);
@@ -42,7 +43,7 @@ async function destination(root, credentials) {
 async function push(root, input, credentials, fetch) {
   if (!input || typeof input.force !== 'boolean') throw new Error('Choose a push operation.');
   if (input.force && input.confirmForce !== true) throw new Error('Confirm force push before overwriting remote changes.');
-  let plan = await destination(root, credentials);
+  let plan = await destination(root, credentials, input.branch);
   if (plan.needsRepository) {
     if (!input.createRepository) throw new Error('Confirm repository creation before pushing.');
     const owner = String(input.owner || plan.owner), name = String(input.name || plan.name);
@@ -57,7 +58,7 @@ async function push(root, input, credentials, fetch) {
     plan = { ...plan, url };
   }
   if (plan.needsBranch && input.createBranch !== true) throw new Error('Confirm creation of the remote branch before pushing.');
-  await remoteGit(root, ['push', '--set-upstream', ...(input.force ? ['--force'] : []), '--', plan.remote, `HEAD:refs/heads/${plan.target}`], credentials);
+  await remoteGit(root, ['push', '--set-upstream', ...(input.force ? ['--force'] : []), '--', plan.remote, `refs/heads/${plan.branch}:refs/heads/${plan.target}`], credentials);
   return snapshot(root);
 }
 module.exports = { destination, push, remoteGit };

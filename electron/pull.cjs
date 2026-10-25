@@ -45,4 +45,33 @@ async function pull(root, credentials, profile) {
   }
   return snapshot(root);
 }
-module.exports = { fetchRemotes, pull };
+async function fetchBranch(root, credentials, ref) {
+  const state = await snapshot(root);
+  let remote;
+  if (typeof ref !== 'string') throw new Error('Select a branch to fetch.');
+  if (ref.startsWith('refs/heads/') && state.local.includes(ref.slice(11))) remote = state.remoteBranches[ref.slice(11)]?.remote;
+  else if (ref.startsWith('refs/remotes/') && state.remote.includes(ref.slice(13))) {
+    const remotes = (await git(root, ['remote'])).trim().split('\n').filter(Boolean);
+    remote = remotes.find(name => ref.startsWith(`refs/remotes/${name}/`));
+  }
+  if (!remote) throw new Error('This branch has no corresponding remote to fetch.');
+  return fetchRemotes(root, credentials, remote);
+}
+async function pullBranch(root, credentials, profile, branch) {
+  let state = await snapshot(root);
+  if (typeof branch !== 'string' || !state.local.includes(branch)) throw new Error('Select a local branch to pull.');
+  if (state.branch === branch) return pull(root, credentials, profile);
+  const remote = state.remoteBranches[branch];
+  if (!remote) throw new Error('This branch has no corresponding remote to pull.');
+  const ref = `refs/heads/${branch}`;
+  const before = (await git(root, ['rev-parse', '--verify', ref])).trim();
+  await fetchRemotes(root, credentials, remote.remote);
+  state = await snapshot(root);
+  if (state.branch === branch) throw new Error('The checked-out branch changed while fetching. Try pulling again.');
+  const target = (await git(root, ['rev-parse', '--verify', remote.ref])).trim();
+  if (await git(root, ['merge-base', '--is-ancestor', target, before]).then(() => true, () => false)) return state;
+  if (!await git(root, ['merge-base', '--is-ancestor', before, target]).then(() => true, () => false)) throw new Error('Check out this branch to pull and merge its divergent history.');
+  await git(root, ['update-ref', '-m', 'GitForge: fast-forward pull', ref, target, before]);
+  return snapshot(root);
+}
+module.exports = { fetchRemotes, pull, fetchBranch, pullBranch };

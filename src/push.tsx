@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Repository } from './repository';
 export type PushPlan = { branch: string; target: string; remote: string; url: string; needsRepository: boolean; needsBranch: boolean; owner?: string; name?: string };
-export type PushInput = { force: boolean; confirmForce?: boolean; createBranch?: boolean; createRepository?: boolean; owner?: string; name?: string; visibility?: string };
+export type PushInput = { force: boolean; branch?: string; confirmForce?: boolean; createBranch?: boolean; createRepository?: boolean; owner?: string; name?: string; visibility?: string };
 export function PushDialog({ plan, force, close, pushed }: { plan: PushPlan; force: boolean; close: () => void; pushed: (input: PushInput) => Promise<void> }) {
   const [owner, setOwner] = useState(plan.owner ?? '');
   const [name, setName] = useState(plan.name ?? '');
@@ -12,7 +12,7 @@ export function PushDialog({ plan, force, close, pushed }: { plan: PushPlan; for
   useEffect(() => { dialog.current?.showModal(); return () => dialog.current?.close(); }, []);
   return <dialog className="create-dialog" ref={dialog} aria-labelledby="push-dialog-title" onCancel={event => { event.preventDefault(); if (!busy) close(); }}><header><h1 id="push-dialog-title">{force ? 'Confirm Force Push' : plan.needsRepository ? 'Create Remote Repository' : 'Create Remote Branch'}</h1></header><form onSubmit={async event => {
     event.preventDefault(); if (busy) return; setBusy(true); setError('');
-    try { await pushed({ force, confirmForce: force, createBranch: plan.needsBranch, createRepository: plan.needsRepository, owner, name, visibility }); }
+    try { await pushed({ branch: plan.branch, force, confirmForce: force, createBranch: plan.needsBranch, createRepository: plan.needsRepository, owner, name, visibility }); }
     catch (error) { setError(error instanceof Error ? error.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '') : 'Push failed.'); setBusy(false); }
   }}>
     <p>Push {plan.branch} to {plan.remote}/{plan.target}.</p>

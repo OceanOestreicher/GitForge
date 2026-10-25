@@ -80,6 +80,40 @@ test('branch deletion optionally removes the configured remote branch and retain
   await expect(feature).toHaveCount(0); expect(git('ls-remote', '--heads', 'origin', 'refs/heads/published')).toBe(''); expect(git('for-each-ref', '--format=%(refname)', 'refs/remotes/origin/published')).toBe('');
 });
 
+test('branch remote menu fetches, pulls and pushes the selected inactive branch without switching the workspace', async () => {
+  const remote = test.info().outputPath('network.git'), seed = test.info().outputPath('seed');
+  git('init', '--bare', remote); git('remote', 'add', 'origin', remote); git('push', '-u', 'origin', 'main', 'feature');
+  git('clone', '-b', 'feature', remote, seed); await fs.writeFile(path.join(seed, 'remote.txt'), 'remote feature\n');
+  git('-C', seed, 'add', '.'); git('-C', seed, 'commit', '-m', 'Remote feature'); git('-C', seed, 'push', 'origin', 'feature');
+  const main = git('rev-parse', 'main');
+  const feature = page.locator('.sidebar-group').first().locator('.branch-row').filter({ hasText: /feature/ });
+  await expect(feature).not.toHaveClass(/local-only-branch/);
+  const menu = async () => { await feature.click({ button: 'right' }); return page.getByRole('group', { name: 'Remote actions', exact: true }); };
+  let group = await menu(); await expect(group.getByRole('menuitem', { name: 'Pull', exact: true })).toBeDisabled();
+  await expect(group.getByRole('menuitem', { name: 'Push', exact: true })).toBeDisabled();
+  await group.getByRole('menuitem', { name: 'Fetch', exact: true }).click();
+  await expect(feature.locator('.behind-count')).toContainText('1'); expect(git('rev-parse', 'feature')).toBe(initial);
+  await write('a.txt', 'working changes kept\n'); const status = git('status', '--porcelain');
+  group = await menu(); await expect(group.getByRole('menuitem', { name: 'Pull', exact: true })).toBeEnabled();
+  await group.getByRole('menuitem', { name: 'Pull', exact: true }).click();
+  await expect.poll(() => git('rev-parse', 'feature')).toBe(git('-C', seed, 'rev-parse', 'HEAD'));
+  expect(git('branch', '--show-current')).toBe('main'); expect(git('rev-parse', 'HEAD')).toBe(main);
+  expect(git('status', '--porcelain')).toBe(status); expect(await read('a.txt')).toBe('working changes kept\n');
+  await expect(feature.locator('.behind-count')).toHaveCount(0);
+  await action({ action: 'reset', hash: initial, mode: 'discard' });
+  await action({ action: 'switch', ref: 'refs/heads/feature' }); await write('local.txt', 'local feature\n'); git('add', '.'); git('commit', '-m', 'Local feature');
+  const localHead = git('rev-parse', 'HEAD'); await action({ action: 'switch', ref: 'refs/heads/main' });
+  await expect(feature.locator('.ahead-count')).toContainText('1');
+  group = await menu(); await expect(group.getByRole('menuitem', { name: 'Push', exact: true })).toBeEnabled();
+  await group.getByRole('menuitem', { name: 'Push', exact: true }).click();
+  await expect(feature.locator('.ahead-count')).toHaveCount(0);
+  expect(git('--git-dir', remote, 'rev-parse', 'feature')).toBe(localHead); expect(git('--git-dir', remote, 'rev-parse', 'main')).toBe(main); expect(git('branch', '--show-current')).toBe('main');
+  await page.locator('summary').filter({ hasText: /^Remote branches$/ }).click();
+  await page.locator('.sidebar-group').nth(1).locator('.branch-row').filter({ hasText: /^origin\/feature$/ }).click({ button: 'right' });
+  group = page.getByRole('group', { name: 'Remote actions', exact: true });
+  await expect(group.getByRole('menuitem', { name: 'Pull', exact: true })).toBeDisabled(); await expect(group.getByRole('menuitem', { name: 'Push', exact: true })).toBeDisabled(); await expect(group.getByRole('menuitem', { name: 'Fetch', exact: true })).toBeEnabled();
+});
+
 test('reset keeps committed changes unstaged or discards them and rejects unrelated commits', async () => {
   await write('a.txt', 'second\n'); git('add', '.'); git('commit', '-m', 'Second');
   const second = git('rev-parse', 'HEAD');

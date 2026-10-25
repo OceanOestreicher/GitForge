@@ -13,10 +13,10 @@ contextBridge.exposeInMainWorld('gitforge', {
   cloneRepository: input => ipcRenderer.invoke('clone-repository', input),
   changeFiles: (root, input) => ipcRenderer.invoke('change-files', root, input),
   commitChanges: (root, input) => ipcRenderer.invoke('commit-changes', root, input),
-  preparePush: root => ipcRenderer.invoke('prepare-push', root),
+  preparePush: (root, branch) => ipcRenderer.invoke('prepare-push', root, branch),
   pushCommits: (root, input) => ipcRenderer.invoke('push-commits', root, input),
-  fetchRepository: root => ipcRenderer.invoke('fetch-repository', root),
-  pullRepository: root => ipcRenderer.invoke('pull-repository', root),
+  fetchRepository: (root, ref) => ipcRenderer.invoke('fetch-repository', root, ref),
+  pullRepository: (root, branch) => ipcRenderer.invoke('pull-repository', root, branch),
   branchAction: (root, input) => ipcRenderer.invoke('branch-action', root, input),
   canResetCommit: (root, hash) => ipcRenderer.invoke('can-reset-commit', root, hash),
   onRepositoryChanged: callback => {

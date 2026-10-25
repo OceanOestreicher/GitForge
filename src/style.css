@@ -19,3 +19,4 @@
 .diff-row.diff-notice{padding:0;text-align:left;color:#929eae;font-style:italic}
 .create-dialog label.choice{display:flex;align-items:center;gap:10px}.choice input{width:auto;flex-shrink:0}.branch-row,.stash-row{cursor:default;user-select:none}.branch-row:hover,.stash-row:hover{background:#363b46}
 .local-only-branch{opacity:.5}
+.context-menu-separator{height:1px;margin:6px 0;background:#3b3f48}.context-menu button:disabled{color:#777;opacity:.6;cursor:default}

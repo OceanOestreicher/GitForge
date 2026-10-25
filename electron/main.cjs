@@ -121,10 +121,10 @@ app.whenReady().then(async () => {
   });
   ipcMain.handle('change-files', (_event, root, input) => mutate(root, () => repository.changeFiles(root, input)));
   ipcMain.handle('commit-changes', (_event, root, input) => mutate(root, () => repository.commit(root, input, activeProfile())));
-  ipcMain.handle('prepare-push', (_event, root) => mutate(root, () => pushing.destination(root, profiles.credentials())));
+  ipcMain.handle('prepare-push', (_event, root, branch) => mutate(root, () => pushing.destination(root, profiles.credentials(), branch)));
   ipcMain.handle('push-commits', (_event, root, input) => mutate(root, () => pushing.push(root, input, profiles.credentials(), (...args) => net.fetch(...args))));
-  ipcMain.handle('fetch-repository', (_event, root) => mutate(root, async () => publish(await pulling.fetchRemotes(root, profiles.credentials()))));
-  ipcMain.handle('pull-repository', (_event, root) => mutate(root, async () => publish(await pulling.pull(root, profiles.credentials(), activeProfile()))));
+  ipcMain.handle('fetch-repository', (_event, root, ref) => mutate(root, async () => publish(await (ref ? pulling.fetchBranch(root, profiles.credentials(), ref) : pulling.fetchRemotes(root, profiles.credentials())))));
+  ipcMain.handle('pull-repository', (_event, root, branch) => mutate(root, async () => publish(await (branch ? pulling.pullBranch(root, profiles.credentials(), activeProfile(), branch) : pulling.pull(root, profiles.credentials(), activeProfile())))));
   const branchActions = { 'switch': 'switchBranch', 'create': 'createBranch', 'checkout': 'checkoutCommit', 'reset': 'reset', 'merge': 'merge', 'stash': 'stash', 'apply-stash': 'applyStash', 'delete-stash': 'drop', 'delete-branch': 'deleteBranch' };
   ipcMain.handle('branch-action', (_event, root, input) => mutate(root, async () => {
     if (!input || !Object.hasOwn(branchActions, input.action)) throw new Error('Invalid repository action.');

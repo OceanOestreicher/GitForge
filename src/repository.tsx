@@ -94,17 +94,17 @@ export function RepositoryView({ initial, updated }: { initial: Repository; upda
       toggleFile({ file, staged });
     }
   };
-  const startPush = async (force: boolean) => {
-    if (busy || !repo.canPush) return; setBusy(true); setError(''); setPushMenu(false);
+  const startPush = async (force: boolean, branch = repo.branch) => {
+    if (busy || !repo.local.includes(branch) || (repo.remoteBranches[branch] && !repo.ahead[branch])) return; setBusy(true); setError(''); setPushMenu(false);
     try {
-      const plan = await window.gitforge.preparePush(repo.path);
+      const plan = await window.gitforge.preparePush(repo.path, branch);
       if (force || plan.needsBranch || plan.needsRepository) setPushDialog({ plan, force });
-      else accept(await window.gitforge.pushCommits(repo.path, { force: false }));
+      else accept(await window.gitforge.pushCommits(repo.path, { force: false, branch }));
     } catch(error) { setError(message(error)); } finally { setBusy(false); }
   };
-  const runRemote = async (action: 'fetch' | 'pull') => {
+  const runRemote = async (action: 'fetch' | 'pull', ref?: string) => {
     if (busy) return; setBusy(true); setError('');
-    try { accept(await (action === 'fetch' ? window.gitforge.fetchRepository(repo.path) : window.gitforge.pullRepository(repo.path))); }
+    try { accept(await (action === 'fetch' ? window.gitforge.fetchRepository(repo.path, ref) : window.gitforge.pullRepository(repo.path, ref?.slice(11)))); }
     catch(error) { setError(message(error)); } finally { setBusy(false); }
   };
   useEffect(() => {
@@ -125,7 +125,7 @@ export function RepositoryView({ initial, updated }: { initial: Repository; upda
   const runBranch = (input: BranchAction) => { void executeBranch(input).catch(error => setError(message(error))); };
   const showMenu = (event: React.MouseEvent, kind: 'commit' | 'branch' | 'stash' | 'files', target: string, paths?: string[]) => {
     event.preventDefault(); if (busy) return;
-    setContext({ kind, target, paths, x: Math.min(event.clientX, window.innerWidth - 250), y: Math.min(event.clientY, window.innerHeight - 170) });
+    setContext({ kind, target, paths, x: Math.min(event.clientX, window.innerWidth - 250), y: Math.min(event.clientY, window.innerHeight - (kind === 'branch' ? 285 : 170)) });
     if (kind === 'commit') void window.gitforge.canResetCommit(repo.path, target).then(canReset => setContext(previous => previous?.kind === 'commit' && previous.target === target ? { ...previous, canReset } : previous)).catch(() => {});
   };
   const switchBranch = (ref: string) => {
@@ -193,7 +193,7 @@ export function RepositoryView({ initial, updated }: { initial: Repository; upda
     {prompt && <BranchDialog prompt={prompt} close={() => setPrompt(null)} execute={executeBranch}/>}
     {context && <div role="menu" className="context-menu" style={{ left: context.x, top: context.y }}>
       {context.kind === 'commit' && <><button role="menuitem" onClick={() => runBranch({ action: 'checkout', hash: context.target })}>Checkout Commit</button><button role="menuitem" disabled={!context.canReset} onClick={() => setPrompt({ kind: 'reset', input: { action: 'reset', hash: context.target } })}>Reset Branch To Commit</button><button role="menuitem" onClick={() => setPrompt({ kind: 'create', input: { action: 'create', hash: context.target } })}>Create Branch From Commit</button></>}
-      {context.kind === 'branch' && <><button role="menuitem" disabled={context.target === `refs/heads/${repo.branch}`} onClick={() => runBranch({ action: 'merge', ref: context.target })}>Merge into current branch</button><button role="menuitem" onClick={() => setPrompt({ kind: 'create', input: { action: 'create', ref: context.target } })}>Create Branch</button>{context.target.startsWith('refs/heads/') && context.target !== `refs/heads/${repo.branch}` && <button role="menuitem" onClick={() => setPrompt({ kind: 'delete-branch', input: { action: 'delete-branch', ref: context.target, remoteRef: repo.remoteBranches[context.target.slice(11)]?.ref } })}>Delete Branch</button>}</>}
+      {context.kind === 'branch' && <><div role="group" aria-label="Remote actions"><button role="menuitem" disabled={busy || !context.target.startsWith('refs/heads/') || !repo.remoteBranches[context.target.slice(11)] || !repo.behind[context.target.slice(11)] || (context.target === `refs/heads/${repo.branch}` ? Boolean(repo.staged.length || repo.unstaged.length) : Boolean(repo.ahead[context.target.slice(11)]))} onClick={() => void runRemote('pull', context.target)}>Pull</button><button role="menuitem" disabled={busy || (context.target.startsWith('refs/heads/') && !repo.remoteBranches[context.target.slice(11)])} onClick={() => void runRemote('fetch', context.target)}>Fetch</button><button role="menuitem" disabled={busy || !context.target.startsWith('refs/heads/') || Boolean(repo.remoteBranches[context.target.slice(11)] && !repo.ahead[context.target.slice(11)])} onClick={() => void startPush(false, context.target.slice(11))}>Push</button></div><div role="separator" className="context-menu-separator"/><button role="menuitem" disabled={context.target === `refs/heads/${repo.branch}`} onClick={() => runBranch({ action: 'merge', ref: context.target })}>Merge into current branch</button><button role="menuitem" onClick={() => setPrompt({ kind: 'create', input: { action: 'create', ref: context.target } })}>Create Branch</button>{context.target.startsWith('refs/heads/') && context.target !== `refs/heads/${repo.branch}` && <button role="menuitem" onClick={() => setPrompt({ kind: 'delete-branch', input: { action: 'delete-branch', ref: context.target, remoteRef: repo.remoteBranches[context.target.slice(11)]?.ref } })}>Delete Branch</button>}</>}
       {context.kind === 'files' && <button role="menuitem" onClick={() => setPrompt({ kind: 'stash', input: { action: 'stash', paths: context.paths } })}>Stash</button>}
       {context.kind === 'stash' && <><button role="menuitem" onClick={() => setPrompt({ kind: 'apply-stash', input: { action: 'apply-stash', hash: context.target } })}>Apply Stash</button><button role="menuitem" onClick={() => setPrompt({ kind: 'delete-stash', input: { action: 'delete-stash', hash: context.target } })}>Delete Stash</button></>}
     </div>}

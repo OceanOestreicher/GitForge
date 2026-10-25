@@ -24,10 +24,10 @@ declare global {
       cloneRepository(input: { url: string; parentPath: string }): Promise<Repository>;
       changeFiles(root: string, input: { action: string; paths: string[] }): Promise<Repository>;
       commitChanges(root: string, input: { title: string; description: string }): Promise<Repository>;
-      preparePush(root: string): Promise<PushPlan>;
+      preparePush(root: string, branch?: string): Promise<PushPlan>;
       pushCommits(root: string, input: PushInput): Promise<Repository>;
-      fetchRepository(root: string): Promise<Repository>;
-      pullRepository(root: string): Promise<Repository>;
+      fetchRepository(root: string, ref?: string): Promise<Repository>;
+      pullRepository(root: string, branch?: string): Promise<Repository>;
       branchAction(root: string, input: BranchAction): Promise<Repository>;
       canResetCommit(root: string, hash: string): Promise<boolean>;
       onRepositoryChanged(callback: (repo: Repository) => void): () => void;

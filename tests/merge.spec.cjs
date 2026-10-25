@@ -10,7 +10,12 @@ const write = (file, value) => fs.writeFile(path.join(root, file), value);
 const read = async file => (await fs.readFile(path.join(root, file), 'utf8')).replace(/\r\n/g, '\n');
 const commit = message => { git('add', '.'); git('commit', '-m', message); return git('rev-parse', 'HEAD'); };
 const action = input => page.evaluate(({ root, input }) => window.gitforge.branchAction(root, input), { root, input });
-async function confirmAbort(response = 1) { await app.evaluate(({ dialog }, response) => { dialog.showMessageBox = async () => ({ response }); }, response); }
+async function confirmAbort(response = 1) {
+  const confirmation = page.getByRole('dialog', { name: 'Abort Merge?', exact: true });
+  await expect(confirmation).toBeVisible();
+  await confirmation.getByRole('button', { name: response ? 'Abort Merge' : 'Cancel', exact: true }).click();
+  await expect(confirmation).toHaveCount(0);
+}
 const dialog = () => page.getByRole('dialog', { name: 'Merge Conflicts', exact: true });
 test.beforeEach(async () => {
   root = await fs.mkdtemp(path.join(os.tmpdir(), 'gitforge-merge-')); git('init', '-b', 'main');
@@ -79,9 +84,9 @@ test('abort after advancing a conflict restores the original branch, files and i
   git('switch', 'feature'); await write('a.txt', 'incoming a\n'); await write('b.txt', 'incoming b\n'); await write('clean.txt', 'incoming automatic\n'); commit('Incoming');
   git('switch', 'main'); await write('a.txt', 'local a\n'); await write('b.txt', 'local b\n'); const head = commit('Local');
   await open(); await action({ action: 'merge', ref: 'refs/heads/feature' }); await choose('theirs', false); await expect(dialog()).toContainText('File 2 of 2');
-  await confirmAbort(0); await dialog().getByRole('button', { name: 'Abort Merge' }).click();
+  await dialog().getByRole('button', { name: 'Abort Merge' }).click(); await confirmAbort(0);
   await expect(dialog()).toContainText('File 2 of 2'); expect(git('rev-parse', 'MERGE_HEAD')).toBeTruthy();
-  await confirmAbort(); await dialog().getByRole('button', { name: 'Abort Merge' }).click(); await expect(dialog()).toHaveCount(0);
+  await dialog().getByRole('button', { name: 'Abort Merge' }).click(); await confirmAbort(); await expect(dialog()).toHaveCount(0);
   expect(git('rev-parse', 'HEAD')).toBe(head); expect(git('status', '--porcelain')).toBe(''); expect(await read('a.txt')).toBe('local a\n'); expect(await read('b.txt')).toBe('local b\n'); expect(await read('clean.txt')).toBe('base\n');
 });
 
@@ -137,7 +142,7 @@ for (const choice of ['ours', 'theirs']) test(`abort a resolved merge from Worki
   } else expect(git('diff', '--cached', '--name-only')).toBe('a.txt');
   const abort = page.locator('.commit-actions').getByRole('button', { name: 'Abort Merge', exact: true });
   await expect(abort).toBeVisible(); await expect(abort).toBeEnabled();
-  await confirmAbort(); await abort.click(); await expect(abort).toHaveCount(0);
+  await abort.click(); await confirmAbort(); await expect(abort).toHaveCount(0);
   expect(git('rev-parse', 'HEAD')).toBe(head); expect(git('status', '--porcelain')).toBe(''); expect(await read('a.txt')).toBe('local\n');
   await expect(page.getByRole('button', { name: 'Commit', exact: true })).toBeDisabled();
   await expect(page.evaluate(root => window.gitforge.conflictAction(root, { action: 'abort' }), root)).rejects.toThrow(/no pending merge/);
@@ -146,7 +151,7 @@ for (const choice of ['ours', 'theirs']) test(`abort a resolved merge from Worki
 test('outside edits are not overwritten when resolving a conflict', async () => {
   await simpleConflict(); await open(); await action({ action: 'merge', ref: 'refs/heads/feature' });
   await write('a.txt', 'outside edits\n'); await choose('theirs'); await expect(dialog().getByRole('alert')).toContainText('changed outside GitForge'); expect(await read('a.txt')).toBe('outside edits\n');
-  await confirmAbort(); await dialog().getByRole('button', { name: 'Abort Merge' }).click(); await expect(dialog()).toHaveCount(0); expect(await read('a.txt')).toBe('local\n');
+  await dialog().getByRole('button', { name: 'Abort Merge' }).click(); await confirmAbort(); await expect(dialog()).toHaveCount(0); expect(await read('a.txt')).toBe('local\n');
 });
 
 test('manual output edits and deletions survive select-all toggles and are saved exactly', async () => {

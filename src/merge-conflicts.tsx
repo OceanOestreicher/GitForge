@@ -1,3 +1,4 @@
+import { AbortMergeDialog } from './abort-merge-dialog';
 import { Message } from './messages';
 import { useEffect, useRef, useState } from 'react';
 import { conflictOutputLine, editOutput, generateOutput, initialSelections, outputText, updateSelections, type MergeFile, type Output, type Selections, type SourceLine } from './merge-output';
@@ -45,6 +46,7 @@ function OutputEditor({ output, disabled, change, region, targetLine }: { region
 
 function FileResolution({ conflict, execute }: { conflict: Conflict; execute: (input: ConflictAction) => Promise<void> }) {
   const file = conflict.file;
+  const [confirmingAbort, setConfirmingAbort] = useState(false);
   const [active, setActive] = useState(0);
   const region = file.regions[active].id;
   const [state, setState] = useState(() => { const selections = initialSelections(file); return { selections, output: generateOutput(file, selections), edited: false }; });
@@ -76,7 +78,8 @@ function FileResolution({ conflict, execute }: { conflict: Conflict; execute: (i
     })}</div>
     <section className="merge-output-section" aria-label="Resolved file output"><div className="merge-output-heading"><h2>Output</h2><span className="muted">{file.editable ? 'Editable · local lines first, incoming lines below' : 'Choose a complete version of this file'}</span></div><OutputEditor region={region} targetLine={conflictOutputLine(file, state.output, region)} output={state.output} disabled={busy || !file.editable} change={value => setState(previous => ({ ...previous, edited: true, output: editOutput(previous.output, value) }))}/></section>
     {error && <p className="create-error merge-error" role="alert">{error}</p>}
-    <footer><nav className="merge-conflict-navigation" aria-label="Conflict navigation"><button aria-label="Previous Conflict" title="Previous Conflict" disabled={busy || file.regions.length < 2} onClick={() => setActive(value => (value + file.regions.length - 1) % file.regions.length)}><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 19V5m-6 6 6-6 6 6"/></svg></button><button aria-label="Next Conflict" title="Next Conflict" disabled={busy || file.regions.length < 2} onClick={() => setActive(value => (value + 1) % file.regions.length)}><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 5v14m-6-6 6 6 6-6"/></svg></button></nav><button className="abort-merge" disabled={busy} onClick={() => void run('abort')}>Abort Merge</button><button className={file.index + 1 === file.total ? 'commit-button' : undefined} disabled={busy || !complete} onClick={() => void run('resolve')}>{file.index + 1 < file.total ? 'Next File' : 'Resolve'}</button></footer>
+    <footer><nav className="merge-conflict-navigation" aria-label="Conflict navigation"><button aria-label="Previous Conflict" title="Previous Conflict" disabled={busy || file.regions.length < 2} onClick={() => setActive(value => (value + file.regions.length - 1) % file.regions.length)}><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 19V5m-6 6 6-6 6 6"/></svg></button><button aria-label="Next Conflict" title="Next Conflict" disabled={busy || file.regions.length < 2} onClick={() => setActive(value => (value + 1) % file.regions.length)}><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 5v14m-6-6 6 6 6-6"/></svg></button></nav><button className="abort-merge" disabled={busy} onClick={() => setConfirmingAbort(true)}>Abort Merge</button><button className={file.index + 1 === file.total ? 'commit-button' : undefined} disabled={busy || !complete} onClick={() => void run('resolve')}>{file.index + 1 < file.total ? 'Next File' : 'Resolve'}</button></footer>
+    {confirmingAbort && <AbortMergeDialog close={() => setConfirmingAbort(false)} execute={() => execute({ action: 'abort', id: conflict.id, index: conflict.index })}/>}
   </>;
 }
 

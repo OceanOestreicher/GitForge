@@ -147,10 +147,6 @@ if (primaryInstance) app.whenReady().then(async () => {
   ipcMain.handle('commit-changes', (_event, root, input) => mutate(root, () => repository.commit(root, input, activeProfile())));
   ipcMain.handle('conflict-action', (_event, root, input) => mutate(root, async () => {
     if (!input || !['abort', 'resolve'].includes(input.action)) throw new Error(Message["conflict.actionRequired"]);
-    if (input.action === 'abort') {
-      const answer = await dialog.showMessageBox(window, { type: 'warning', title: Message['conflict.abortTitle'], message: Message['conflict.abortConfirmation'], buttons: ['Cancel', 'Abort Merge'], defaultId: 0, cancelId: 0, noLink: true });
-      if (answer.response !== 1) return repository.snapshot(root);
-    }
     return publish(await require('./conflicts.cjs')[input.action](root, input));
   }, true));
   ipcMain.handle('prepare-push', (_event, root, branch) => mutate(root, () => pushing.destination(root, profiles.credentials(), branch)));

@@ -102,7 +102,8 @@ test('pull blocks dirty files and aborts conflicting merges without moving the b
     expect(await fs.readFile(path.join(root, 'dirty.txt'), 'utf8')).toBe('keep\n');
     await fs.unlink(path.join(root, 'dirty.txt')); await expect(page.getByRole('heading', { name: 'Unstaged files (0)' })).toBeVisible();
     await page.locator('.repo-buttons').getByRole('button', { name: 'Pull', exact: true }).click();
-    await expect(page.getByRole('alert')).toContainText('merge was aborted');
+    await expect(page.getByRole('dialog', { name: 'Merge Conflicts' })).toBeVisible();
+    await page.getByRole('button', { name: 'Abort Merge', exact: true }).click(); await expect(page.getByRole('dialog', { name: 'Merge Conflicts' })).toHaveCount(0);
     expect(git(root, 'rev-parse', 'HEAD')).toBe(localHead); expect(git(root, 'status', '--porcelain')).toBe('');
     expect(await fs.readFile(path.join(root, 'tracked.txt'), 'utf8')).toMatch(/^local edit\r?\n$/);
     expect(await fs.stat(path.join(root, '.git', 'MERGE_HEAD')).then(() => true, () => false)).toBe(false);

@@ -75,7 +75,9 @@ async function snapshot(root) {
     return `${file}:${stat?.mtimeMs}:${stat?.ctimeMs}:${stat?.size}`;
   }))).join('|');
   const stashEntries = stash.trim().split('\n').filter(Boolean).map(line => { const fields = line.split('\t'); return { ref: fields[0], hash: fields[fields.length - 1], message: fields.slice(1, -1).join('\t') }; });
-  return { path: root, name: path.basename(root), branch: branch.trim(), local, remote, ahead, behind, remoteBranches, canPush: local.includes(branch.trim()) && (!remoteBranches[branch.trim()] || ahead[branch.trim()] > 0), fileVersion, unpushed: ahead[branch.trim()] || 0, stashes: stashEntries.map(entry => `${entry.ref}\t${entry.message}`), stashEntries, staged, unstaged, commits: history };
+  const conflict = await require('./conflicts.cjs').status(root);
+  const mergePending = Boolean((await git(root, ['rev-parse', '-q', '--verify', 'MERGE_HEAD']).catch(() => '')).trim());
+  return { path: root, name: path.basename(root), branch: branch.trim(), local, remote, ahead, behind, remoteBranches, canPush: local.includes(branch.trim()) && (!remoteBranches[branch.trim()] || ahead[branch.trim()] > 0), fileVersion, conflict, mergePending, unpushed: ahead[branch.trim()] || 0, stashes: stashEntries.map(entry => `${entry.ref}\t${entry.message}`), stashEntries, staged, unstaged, commits: history };
 }
 async function correspondingRemote(root, name, refs, upstream) {
   refs ??= (await git(root, ['for-each-ref', '--format=%(refname)', 'refs/remotes'])).trim().split('\n');
@@ -178,7 +180,9 @@ async function changeFiles(root, input) {
 }
 async function commit(root, input, profile) {
   if (!input || typeof input.title !== 'string' || !input.title.trim() || typeof input.description !== 'string') throw new Error('Enter a commit title.');
-  if (!(await snapshot(root)).staged.length) throw new Error('Stage at least one file before committing.');
+  const state = await snapshot(root);
+  if (state.conflict || (await git(root, ['ls-files', '-u'])).trim()) throw new Error('Resolve all merge conflicts before committing.');
+  if (!state.staged.length && !state.mergePending) throw new Error('Stage at least one file before committing.');
   await new Promise((resolve, reject) => execFile('git', ['-c', `user.name=${profile.username}`, '-c', `user.email=${profile.email}`, 'commit', '-m', input.title.trim(), ...(input.description.trim() ? ['-m', input.description.trim()] : [])], {
     cwd: root, windowsHide: true, timeout: 30000, maxBuffer: 8 * 1024 * 1024,
     env: { ...process.env, GIT_AUTHOR_NAME: profile.username, GIT_AUTHOR_EMAIL: profile.email, GIT_COMMITTER_NAME: profile.username, GIT_COMMITTER_EMAIL: profile.email, GIT_TERMINAL_PROMPT: '0' }

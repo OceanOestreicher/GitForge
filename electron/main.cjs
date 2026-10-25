@@ -28,9 +28,11 @@ app.whenReady().then(async () => {
   const activeProfile = () => { const profile = profiles.list().find(profile => profile.active); if (!profile) throw new Error('Select an active profile first.'); return profile; };
   const operations = new Set();
   const operationVersions = new Map();
-  const mutate = async (root, work) => {
+  const mutate = async (root, work, resolving = false) => {
     requireProfile();
     if (!opened.has(root)) throw new Error('Open this repository first.');
+    if (operations.has(root)) throw new Error('A repository operation is already in progress.');
+    if (!resolving && await require('./conflicts.cjs').load(root)) throw new Error('Resolve or abort the current merge conflicts first.');
     if (operations.has(root)) throw new Error('A repository operation is already in progress.');
     operationVersions.set(root, (operationVersions.get(root) || 0) + 1);
     operations.add(root); try { return await work(); } finally { operations.delete(root); operationVersions.set(root, (operationVersions.get(root) || 0) + 1); }
@@ -126,6 +128,10 @@ app.whenReady().then(async () => {
   });
   ipcMain.handle('change-files', (_event, root, input) => mutate(root, () => repository.changeFiles(root, input)));
   ipcMain.handle('commit-changes', (_event, root, input) => mutate(root, () => repository.commit(root, input, activeProfile())));
+  ipcMain.handle('conflict-action', (_event, root, input) => mutate(root, async () => {
+    if (!input || !['abort', 'resolve'].includes(input.action)) throw new Error('Select a conflict action.');
+    return publish(await require('./conflicts.cjs')[input.action](root, input));
+  }, true));
   ipcMain.handle('prepare-push', (_event, root, branch) => mutate(root, () => pushing.destination(root, profiles.credentials(), branch)));
   ipcMain.handle('push-commits', (_event, root, input) => mutate(root, () => pushing.push(root, input, profiles.credentials(), (...args) => net.fetch(...args))));
   ipcMain.handle('fetch-repository', (_event, root, ref) => mutate(root, async () => publish(await (ref ? pulling.fetchBranch(root, profiles.credentials(), ref) : pulling.fetchRemotes(root, profiles.credentials())))));
@@ -168,6 +174,7 @@ app.whenReady().then(async () => {
     },
     remote: async root => {
       if (operations.has(root)) return;
+      if (await require('./conflicts.cjs').load(root)) return;
       if (!(await repository.git(root, ['remote'])).trim()) return;
       await mutate(root, async () => publish(await pulling.fetchRemotes(root, profiles.credentials())));
     },

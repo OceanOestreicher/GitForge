@@ -33,13 +33,15 @@ async function pull(root, credentials, profile) {
   if (latest.staged.length || latest.unstaged.length) throw new Error('Files changed while fetching. Commit or revert the changes, then pull again.');
   if ((await git(root, ['rev-parse', '--verify', 'HEAD']).catch(() => '')).trim() !== head || (await git(root, ['symbolic-ref', '--short', '-q', 'HEAD'])).trim() !== branch) throw new Error('The checked-out branch changed while fetching. Pull again from the current branch.');
   try {
-    await git(root, ['-c', `user.name=${profile.username}`, '-c', `user.email=${profile.email}`, 'merge', ...(fastForward ? ['--ff-only'] : ['--no-edit']), target]);
+    await git(root, ['-c', `user.name=${profile.username}`, '-c', `user.email=${profile.email}`, '-c', 'merge.conflictStyle=merge', 'merge', ...(fastForward ? ['--ff-only'] : ['--ff', '--no-edit']), target]);
   } catch (error) {
     const merging = (await git(root, ['rev-parse', '-q', '--verify', 'MERGE_HEAD']).catch(() => '')).trim();
     if (merging) {
-      try { await git(root, ['merge', '--abort']); }
-      catch { throw new Error('The pull encountered conflicts and Git could not abort automatically. Inspect the repository and abort the merge before continuing.'); }
-      throw new Error('Pull encountered merge conflicts. The merge was aborted and your local branch was restored. Conflict resolution in GitForge is planned for Phase 9.');
+      if ((await git(root, ['ls-files', '-u'])).trim()) {
+        await require('./conflicts.cjs').begin(root, { kind: 'pull', originalHead: head });
+        return snapshot(root);
+      }
+      await git(root, ['merge', '--abort']);
     }
     throw new Error('Git could not merge the fetched changes. Check branch history, repository permissions, and Git hooks.');
   }

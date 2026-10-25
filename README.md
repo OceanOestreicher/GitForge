@@ -50,15 +50,24 @@ five minutes), Fetch, Pull, and behind counts displayed as `N ↓`. Fetch update
 remote-tracking branches without changing local branches or working files.
 Pull fetches the upstream, fast-forwards where possible, and otherwise merges
 using the active profile identity. Uncommitted changes block Pull. Conflicting
-pull merges are aborted and reported until Phase 9 adds conflict resolution.
+pull merges open the conflict resolver described below.
 
 Phase 8 adds branch switching, creation from branches or commits, detached
 commit checkout, and confirmed branch resets that keep or discard changes.
 Dirty branch switches offer discard or stash-and-apply. Branch context menus
-support merging; conflicting merges are aborted until Phase 9. Selected files
+support merging and conflict resolution. Selected files
 can be stashed with a name, and saved stashes can be applied or deleted through
 confirmed context-menu actions. Failed stash applications restore prior changes
-and retain the stash.
+and retain the stash when aborted.
+
+Phase 9 adds a two-pane conflict resolver for branch merges, pulls, and stash
+application. Choose local, incoming, or both changes for each conflict, then
+advance through the remaining conflicts. Resolving stages the results; a branch
+merge or pull stays pending until committed. Abort restores the state before the
+operation, including staged, unstaged, and untracked changes for stash operations.
+Conflict choices survive an application restart. Binary files and deletions can
+be resolved by keeping either full version. Fast-forward merges do not create an
+extra commit; conflict-free divergent merges create one automatically.
 
 ## Run
 

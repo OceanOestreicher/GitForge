@@ -7,6 +7,7 @@ import { CloneRepository } from './clone-repository';
 import { ProfilesPage, type Profile, type ProfileInput } from './profiles';
 import type { PushPlan, PushInput } from './push';
 import type { BranchAction } from './branch-dialog';
+import type { ConflictAction } from './merge-conflicts';
 
 declare global {
   interface Window {
@@ -30,6 +31,7 @@ declare global {
       fetchRepository(root: string, ref?: string): Promise<Repository>;
       pullRepository(root: string, branch?: string): Promise<Repository>;
       branchAction(root: string, input: BranchAction): Promise<Repository>;
+      conflictAction(root: string, input: ConflictAction): Promise<Repository>;
       canResetCommit(root: string, hash: string): Promise<boolean>;
       onRepositoryChanged(callback: (repo: Repository) => void): () => void;
       onRefreshError(callback: (error: { path: string; message: string }) => void): () => void;

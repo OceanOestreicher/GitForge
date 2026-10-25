@@ -4,6 +4,14 @@ const path = require('node:path');
 
 const identity = profile => ['-c', `user.name=${profile.username}`, '-c', `user.email=${profile.email}`];
 const dirty = state => state.staged.length || state.unstaged.length;
+async function validateBranchName(root, value) {
+  if (typeof value !== 'string' || !value.trim()) throw new Error('Enter a branch name.');
+  const name = value.trim();
+  if (/\s/.test(name)) throw new Error('The branch name is invalid. Branch names cannot contain spaces. Use a name such as merge-1 instead.');
+  if (name.startsWith('-') || name === 'HEAD') throw new Error('The branch name is invalid. It cannot start with a hyphen or be named HEAD.');
+  await git(root, ['check-ref-format', `refs/heads/${name}`]).catch(() => { throw new Error('The branch name is invalid. Use a name such as merge-1 or feature/merge-1.'); });
+  return name;
+}
 async function head(root) { return (await git(root, ['rev-parse', '--verify', 'HEAD']).catch(() => '')).trim(); }
 async function attached(root) { return (await git(root, ['symbolic-ref', '--short', '-q', 'HEAD']).catch(() => '')).trim(); }
 async function idle(root) {
@@ -110,38 +118,65 @@ async function stash(root, input, profile) {
 }
 async function applyStash(root, input, profile) {
   await idle(root); const hash = await requireStash(root, input.hash);
-  const originalHead = await head(root);
-  const originalIndex = (await git(root, ['write-tree'])).trim();
-  const state = await snapshot(root); let backup;
-  if (dirty(state)) {
-    await git(root, [...identity(profile), 'stash', 'push', '--include-untracked', '-m', 'GitForge temporary backup before stash application']);
-    backup = (await git(root, ['rev-parse', 'refs/stash'])).trim();
-    await cleanSavedUntracked(root, state, backup);
-    try { await git(root, ['stash', 'apply', '--index', backup]); }
-    catch { throw new Error('Existing changes could not be restored from the safety stash. They remain saved in the stash list; restore them before continuing.'); }
-  }
+  const originalHead = await head(root), originalIndex = (await git(root, ['write-tree'])).trim();
+  const base = (await git(root, ['rev-parse', `${hash}^1`])).trim();
   const directory = await fs.mkdtemp(path.join(require('node:os').tmpdir(), 'gitforge-apply-index-'));
+  const environment = { GIT_INDEX_FILE: path.join(directory, 'index') };
+  const safetyRef = `refs/gitforge/conflicts/${require('node:crypto').randomUUID()}`;
+  let sessionOwned = false, originalWorkTree, changedIndex = false, startedMerge = false, keepSafety = false;
   try {
-    // Merge staged trees separately: native stash --index can reject unrelated
-    // staged additions while restoring a renamed/deleted file.
-    const environment = { GIT_INDEX_FILE: path.join(directory, 'index') };
-    await git(root, ['read-tree', '-m', '--aggressive', `${hash}^1`, originalIndex, `${hash}^2`], environment);
-    const mergedIndex = (await git(root, ['write-tree'], environment)).trim();
-    await git(root, ['reset', '--mixed', originalHead]);
-    await git(root, ['stash', 'apply', hash]);
-    await git(root, ['read-tree', mergedIndex]);
-  }
-  catch {
+    await git(root, ['read-tree', '--reset', originalHead], environment);
+    await git(root, ['add', '-A', '--', '.'], environment);
+    originalWorkTree = (await git(root, ['write-tree'], environment)).trim();
+    const indexCommit = (await git(root, [...identity(profile), 'commit-tree', originalIndex, '-p', originalHead, '-m', 'GitForge original index'])).trim();
+    const ours = (await git(root, [...identity(profile), 'commit-tree', originalWorkTree, '-p', originalHead, '-p', indexCommit, '-m', 'GitForge working changes before stash'])).trim();
+    await git(root, ['update-ref', safetyRef, ours]);
+    await git(root, ['read-tree', '--reset', hash], environment);
+    const untracked = await git(root, ['ls-tree', '-r', '--name-only', '-z', `${hash}^3`]).catch(() => '');
+    const untrackedPaths = untracked.split('\0').filter(Boolean);
+    if (untrackedPaths.length) await git(root, ['restore', `--source=${hash}^3`, '--staged', '--', ...untrackedPaths], environment);
+    const incomingTree = (await git(root, ['write-tree'], environment)).trim();
+    const incoming = (await git(root, [...identity(profile), 'commit-tree', incomingTree, '-p', base, '-m', 'GitForge incoming stash changes'])).trim();
+    const incomingPaths = (await git(root, ['diff', '--name-only', '--no-renames', '-z', base, incoming])).split('\0').filter(Boolean);
+    await git(root, ['read-tree', '--empty'], environment);
+    let mergedIndex;
     try {
-      await git(root, ['reset', '--hard', originalHead]); await removeUntracked(root);
-      if (backup) { await git(root, ['stash', 'apply', '--index', backup]); await dropStash(root, backup); }
-    } catch { throw new Error('Stash application failed and could not be restored automatically. The original stash and any safety backup have been retained.'); }
-    throw new Error('The stash could not be applied without conflicts. The previous working changes were restored and the stash was retained. Conflict resolution is planned for Phase 9.');
+      await git(root, ['read-tree', '-m', '--aggressive', base, originalIndex, `${hash}^2`], environment);
+      mergedIndex = (await git(root, ['write-tree'], environment)).trim();
+    } catch { /* Content merges can require resolving staged versions too. */ }
+    await git(root, ['read-tree', originalWorkTree]);
+    changedIndex = true;
+    await git(root, ['update-index', '--refresh']);
+    startedMerge = true;
+    try { await git(root, ['-c', 'merge.conflictStyle=merge', 'merge-recursive', base, '--', ours, incoming]); }
+    catch (error) {
+      if ((await git(root, ['ls-files', '-u'])).trim()) {
+        await require('./conflicts.cjs').begin(root, { kind: 'stash', originalHead, originalIndex, originalWorkTree, safetyRef, incomingPaths, stashHash: hash, deleteAfter: input.deleteAfter === true, returnBranch: input.returnBranch });
+        sessionOwned = true;
+        return snapshot(root);
+      }
+      await require('./conflicts.cjs').restoreStashState(root, { originalWorkTree, originalIndex });
+      throw new Error('Git could not apply the stash. The previous working changes were restored and the stash was retained.');
+    }
+    await git(root, ['read-tree', mergedIndex || originalIndex]);
+    changedIndex = false;
+    if (input.deleteAfter === true) await dropStash(root, hash);
+    return snapshot(root);
+  } catch (error) {
+    if (changedIndex && !sessionOwned) {
+      try {
+        if (startedMerge) await require('./conflicts.cjs').restoreStashState(root, { originalWorkTree, originalIndex });
+        else await git(root, ['read-tree', originalIndex]);
+      } catch {
+        keepSafety = true;
+        throw new Error(`Stash application failed and the original changes could not be restored automatically. The stash and safety backup ${safetyRef} have been retained.`);
+      }
+    }
+    throw error;
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+    if (!sessionOwned && !keepSafety) await git(root, ['update-ref', '-d', safetyRef]);
   }
-  finally { await fs.rm(directory, { recursive: true, force: true }); }
-  if (backup) await dropStash(root, backup);
-  if (input.deleteAfter === true) await dropStash(root, hash);
-  return snapshot(root);
 }
 async function switchTo(root, ref, name) {
   if (ref.startsWith('refs/heads/')) return git(root, ['switch', '--', ref.slice(11)]);
@@ -150,9 +185,7 @@ async function switchTo(root, ref, name) {
 async function switchBranch(root, input, profile) {
   await idle(root); const ref = await branchRef(root, input.ref);
   if (ref.startsWith('refs/remotes/')) {
-    if (typeof input.name !== 'string' || !input.name.trim() || input.name.trim().startsWith('-')) throw new Error('Enter a name for the new local branch.');
-    input = { ...input, name: input.name.trim() };
-    await git(root, ['check-ref-format', `refs/heads/${input.name}`]);
+    input = { ...input, name: await validateBranchName(root, input.name) };
     if ((await git(root, ['for-each-ref', '--format=%(refname)', 'refs/heads'])).trim().split('\n').includes(`refs/heads/${input.name}`)) throw new Error('A local branch with this name already exists. Choose another name or check out the existing local branch.');
   }
   const state = await snapshot(root), originalBranch = await attached(root), originalHead = await head(root);
@@ -169,7 +202,7 @@ async function switchBranch(root, input, profile) {
   }
   try {
     await switchTo(root, ref, input.name);
-    if (savedStash) await applyStash(root, { hash: savedStash, deleteAfter: true }, profile);
+    if (savedStash) await applyStash(root, { hash: savedStash, deleteAfter: true, returnBranch: { branch: originalBranch, head: originalHead } }, profile);
   } catch (error) {
     if (savedStash) {
       try {
@@ -184,8 +217,7 @@ async function switchBranch(root, input, profile) {
 }
 async function createBranch(root, input) {
   await idle(root);
-  if (!input || typeof input.name !== 'string' || !input.name.trim() || input.name.trim().startsWith('-')) throw new Error('Enter a valid branch name.');
-  const name = input.name.trim(); await git(root, ['check-ref-format', `refs/heads/${name}`]);
+  const name = await validateBranchName(root, input?.name);
   const source = input.hash ? await commitHash(root, input.hash) : await branchRef(root, input.ref);
   if (dirty(await snapshot(root))) throw new Error('Commit, stash, or discard working changes before creating and checking out a branch.');
   await git(root, ['switch', '--no-track', '-c', name, source]);
@@ -210,12 +242,15 @@ async function merge(root, input, profile) {
   if (!branch) throw new Error('Check out a local branch before merging.');
   if (ref === `refs/heads/${branch}`) throw new Error('Select a different branch to merge.');
   if (dirty(await snapshot(root))) throw new Error('Commit, stash, or discard working changes before merging.');
-  try { await git(root, [...identity(profile), 'merge', '--no-edit', ref]); }
+  const originalHead = await head(root);
+  try { await git(root, [...identity(profile), '-c', 'merge.conflictStyle=merge', 'merge', '--ff', '--no-edit', ref]); }
   catch {
     if (await git(root, ['rev-parse', '-q', '--verify', 'MERGE_HEAD']).catch(() => '')) {
-      try { await git(root, ['merge', '--abort']); }
-      catch { throw new Error('Merge failed and could not be aborted automatically. Inspect the repository before continuing.'); }
-      throw new Error('The merge encountered conflicts and was aborted. The original branch state was restored. Conflict resolution is planned for Phase 9.');
+      if ((await git(root, ['ls-files', '-u'])).trim()) {
+        await require('./conflicts.cjs').begin(root, { kind: 'merge', originalHead });
+        return snapshot(root);
+      }
+      await git(root, ['merge', '--abort']);
     }
     throw new Error('Git could not merge this branch. Check its history and Git hooks.');
   }

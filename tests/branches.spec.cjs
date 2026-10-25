@@ -31,6 +31,22 @@ test('branch dialog creates a checked-out local branch without an upstream; comm
   await action({ action: 'create', hash: initial, name: 'from-commit' }); expect(git('branch', '--show-current')).toBe('from-commit');
 });
 
+test('invalid branch names show plain-English errors and allow correction without changing Git state', async () => {
+  await page.locator('.repo-buttons').getByRole('button', { name: 'Branch', exact: true }).click();
+  const form = page.getByRole('dialog', { name: 'Create Branch', exact: true });
+  await form.getByLabel('Branch name', { exact: true }).fill('Merge 1'); await form.getByRole('button', { name: 'Create Branch', exact: true }).click();
+  await expect(form.getByRole('alert')).toContainText('Branch names cannot contain spaces');
+  await expect(form.getByRole('alert')).not.toContainText('check-ref-format');
+  expect(git('branch', '--show-current')).toBe('main'); expect(git('rev-parse', 'HEAD')).toBe(initial);
+  await form.getByLabel('Branch name', { exact: true }).fill('bad..name'); await form.getByRole('button', { name: 'Create Branch', exact: true }).click();
+  await expect(form.getByRole('alert')).toContainText('The branch name is invalid'); await expect(form.getByRole('alert')).not.toContainText('Command failed');
+  await expect(action({ action: 'create', hash: initial, name: 'Merge 1' })).rejects.toThrow(/cannot contain spaces/);
+  git('update-ref', 'refs/remotes/origin/main', initial);
+  await expect(action({ action: 'switch', ref: 'refs/remotes/origin/main', name: 'Merge 1' })).rejects.toThrow(/cannot contain spaces/);
+  await form.getByLabel('Branch name', { exact: true }).fill('merge-1'); await form.getByRole('button', { name: 'Create Branch', exact: true }).click();
+  await expect(form).toHaveCount(0); expect(git('branch', '--show-current')).toBe('merge-1');
+});
+
 test('history groups local/remote tips, expands compound labels and adds HEAD only while detached', async () => {
   git('update-ref', 'refs/remotes/origin/main', initial); git('update-ref', 'refs/remotes/origin/feature', initial);
   git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
@@ -225,7 +241,8 @@ test('stash application conflict restores preexisting staged, unstaged and untra
   await write('a.txt', 'committed incompatible\n'); git('add', '.'); git('commit', '-m', 'Incompatible');
   await write('b.txt', 'staged\n'); git('add', 'b.txt'); await write('b.txt', 'unstaged\n'); await write('new.txt', 'safe\n');
   const before = git('status', '--porcelain');
-  await expect(action({ action: 'apply-stash', hash, deleteAfter: true })).rejects.toThrow(/restored/);
+  await action({ action: 'apply-stash', hash, deleteAfter: true });
+  await page.getByRole('button', { name: 'Abort Merge', exact: true }).click(); await expect(page.getByRole('dialog', { name: 'Merge Conflicts' })).toHaveCount(0);
   expect(git('status', '--porcelain')).toBe(before); expect(git('show', ':b.txt')).toBe('staged'); expect(await read('b.txt')).toBe('unstaged\n'); expect(await read('new.txt')).toBe('safe\n');
   expect(git('stash', 'list', '--format=%H')).toBe(hash); expect(git('ls-files', '-u')).toBe('');
 });
@@ -239,7 +256,8 @@ test('branch merges fast-forward, create divergent merge commits, and abort conf
   expect(git('show', '-s', '--format=%P').split(' ')).toHaveLength(2); expect(git('show', '-s', '--format=%an')).toBe('fixture');
   await write('a.txt', 'main conflict\n'); git('add', '.'); git('commit', '-m', 'Main conflict'); const before = git('rev-parse', 'HEAD');
   await action({ action: 'switch', ref: 'refs/heads/feature' }); await write('a.txt', 'other conflict\n'); git('add', '.'); git('commit', '-m', 'Feature conflict');
-  await action({ action: 'switch', ref: 'refs/heads/main' }); await expect(action({ action: 'merge', ref: 'refs/heads/feature' })).rejects.toThrow(/aborted/);
+  await action({ action: 'switch', ref: 'refs/heads/main' }); await action({ action: 'merge', ref: 'refs/heads/feature' });
+  await page.getByRole('button', { name: 'Abort Merge', exact: true }).click(); await expect(page.getByRole('dialog', { name: 'Merge Conflicts' })).toHaveCount(0);
   expect(git('rev-parse', 'HEAD')).toBe(before); expect(git('status', '--porcelain')).toBe(''); expect(await read('a.txt')).toMatch(/^main conflict\r?\n$/);
 });
 
@@ -274,7 +292,8 @@ test('context menus confirm stash, apply, delete and reset; dirty branch switchi
 test('failed stash-and-switch restores original branch and changes and keeps a recovery stash', async () => {
   git('switch', 'feature'); await write('a.txt', 'incompatible branch\n'); git('add', '.'); git('commit', '-m', 'Incompatible'); git('switch', 'main');
   await write('a.txt', 'local work\n'); await write('new.txt', 'untracked\n'); const before = git('status', '--porcelain');
-  await expect(action({ action: 'switch', ref: 'refs/heads/feature', strategy: 'stash' })).rejects.toThrow(/original branch and working changes were restored/);
+  await action({ action: 'switch', ref: 'refs/heads/feature', strategy: 'stash' });
+  await page.getByRole('button', { name: 'Abort Merge', exact: true }).click(); await expect(page.getByRole('dialog', { name: 'Merge Conflicts' })).toHaveCount(0);
   expect(git('branch', '--show-current')).toBe('main'); expect(git('status', '--porcelain')).toBe(before);
   expect(await read('a.txt')).toBe('local work\n'); expect(await read('new.txt')).toBe('untracked\n'); expect(git('stash', 'list')).toContain('GitForge branch switch');
   expect(git('ls-files', '-u')).toBe('');

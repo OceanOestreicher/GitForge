@@ -6,6 +6,7 @@ import { CreateRepository } from './create-repository';
 import { CloneRepository } from './clone-repository';
 import { ProfilesPage, type Profile, type ProfileInput } from './profiles';
 import type { PushPlan, PushInput } from './push';
+import type { BranchAction } from './branch-dialog';
 
 declare global {
   interface Window {
@@ -27,6 +28,8 @@ declare global {
       pushCommits(root: string, input: PushInput): Promise<Repository>;
       fetchRepository(root: string): Promise<Repository>;
       pullRepository(root: string): Promise<Repository>;
+      branchAction(root: string, input: BranchAction): Promise<Repository>;
+      canResetCommit(root: string, hash: string): Promise<boolean>;
       onRepositoryChanged(callback: (repo: Repository) => void): () => void;
       onRefreshError(callback: (error: { path: string; message: string }) => void): () => void;
       chooseParentDirectory(): Promise<string | null>;

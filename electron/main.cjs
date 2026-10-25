@@ -4,6 +4,7 @@ const { createProfileStore } = require('./profiles.cjs');
 const { cloneRepository } = require('./clone.cjs');
 const pushing = require('./push.cjs');
 const pulling = require('./pull.cjs');
+const branches = require('./branches.cjs');
 const { startRefresh } = require('./refresh.cjs');
 const repository = require('./repository.cjs');
 const opened = new Set();
@@ -124,6 +125,15 @@ app.whenReady().then(async () => {
   ipcMain.handle('push-commits', (_event, root, input) => mutate(root, () => pushing.push(root, input, profiles.credentials(), (...args) => net.fetch(...args))));
   ipcMain.handle('fetch-repository', (_event, root) => mutate(root, async () => publish(await pulling.fetchRemotes(root, profiles.credentials()))));
   ipcMain.handle('pull-repository', (_event, root) => mutate(root, async () => publish(await pulling.pull(root, profiles.credentials(), activeProfile()))));
+  const branchActions = { 'switch': 'switchBranch', 'create': 'createBranch', 'checkout': 'checkoutCommit', 'reset': 'reset', 'merge': 'merge', 'stash': 'stash', 'apply-stash': 'applyStash', 'delete-stash': 'drop' };
+  ipcMain.handle('branch-action', (_event, root, input) => mutate(root, async () => {
+    if (!input || !Object.hasOwn(branchActions, input.action)) throw new Error('Invalid repository action.');
+    return publish(await branches[branchActions[input.action]](root, input, activeProfile()));
+  }));
+  ipcMain.handle('can-reset-commit', async (_event, root, hash) => {
+    requireProfile(); if (!opened.has(root)) throw new Error('Open this repository first.');
+    return branches.canReset(root, hash);
+  });
   ipcMain.handle('choose-parent-directory', async () => {
     requireProfile();
     const result = await dialog.showOpenDialog(window, { title: 'Choose parent directory', properties: ['openDirectory'] });

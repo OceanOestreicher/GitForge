@@ -17,6 +17,8 @@ contextBridge.exposeInMainWorld('gitforge', {
   pushCommits: (root, input) => ipcRenderer.invoke('push-commits', root, input),
   fetchRepository: root => ipcRenderer.invoke('fetch-repository', root),
   pullRepository: root => ipcRenderer.invoke('pull-repository', root),
+  branchAction: (root, input) => ipcRenderer.invoke('branch-action', root, input),
+  canResetCommit: (root, hash) => ipcRenderer.invoke('can-reset-commit', root, hash),
   onRepositoryChanged: callback => {
     const listener = (_event, data) => callback(data);
     ipcRenderer.on('repository-changed', listener);

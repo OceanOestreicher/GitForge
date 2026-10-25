@@ -14,9 +14,8 @@ paged commit history, commit metadata, and staged/unstaged file diffs with
 path and tree views. Use File → Open Repo to open a repository in a new tab,
 or Open on a new tab to use that tab.
 
-Branch and commit context-menu actions remain
-placeholders for later phases. Opening and inspecting repositories does not
-stage files, change branches, or create commits.
+Opening and inspecting repositories does not stage files, change branches,
+or create commits.
 
 Phase 3 adds local repository initialization through Create or File → Init Repo.
 Enter a repository name, an existing absolute parent directory, and a default
@@ -52,6 +51,14 @@ remote-tracking branches without changing local branches or working files.
 Pull fetches the upstream, fast-forwards where possible, and otherwise merges
 using the active profile identity. Uncommitted changes block Pull. Conflicting
 pull merges are aborted and reported until Phase 9 adds conflict resolution.
+
+Phase 8 adds branch switching, creation from branches or commits, detached
+commit checkout, and confirmed branch resets that keep or discard changes.
+Dirty branch switches offer discard or stash-and-apply. Branch context menus
+support merging; conflicting merges are aborted until Phase 9. Selected files
+can be stashed with a name, and saved stashes can be applied or deleted through
+confirmed context-menu actions. Failed stash applications restore prior changes
+and retain the stash.
 
 ## Run
 

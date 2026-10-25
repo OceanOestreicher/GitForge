@@ -2,10 +2,10 @@ const { execFile } = require('node:child_process');
 const path = require('node:path');
 const fs = require('node:fs/promises');
 
-function git(cwd, args) {
+function git(cwd, args, environment = {}) {
   return new Promise((resolve, reject) => execFile('git', ['--no-optional-locks', '--literal-pathspecs', '-c', 'core.quotepath=false', ...args], {
     cwd, windowsHide: true, timeout: 30000, maxBuffer: 32 * 1024 * 1024,
-    env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_PAGER: 'cat' }
+    env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_PAGER: 'cat', ...environment }
   }, (error, stdout, stderr) => error ? reject(new Error(stderr.trim() || error.message)) : resolve(stdout)));
 }
 async function commits(root, skip = 0) {
@@ -20,7 +20,7 @@ async function snapshot(root) {
   const [branch, refs, stash, status, history] = await Promise.all([
     git(root, ['symbolic-ref', '--short', '-q', 'HEAD']).catch(async () => `Detached HEAD (${(await git(root, ['rev-parse', '--short', 'HEAD'])).trim()})`),
     git(root, ['for-each-ref', '--format=%(refname:short)', 'refs/heads', 'refs/remotes']),
-    git(root, ['stash', 'list', '--format=%gd%x09%s']),
+    git(root, ['stash', 'list', '--format=%gd%x09%s%x09%H']),
     git(root, ['status', '--porcelain=v1', '-z', '--untracked-files=all']), commits(root)
   ]);
   const local = [], remote = [];
@@ -48,7 +48,8 @@ async function snapshot(root) {
     const stat = await fs.lstat(path.join(root, file)).catch(() => null);
     return `${file}:${stat?.mtimeMs}:${stat?.ctimeMs}:${stat?.size}`;
   }))).join('|');
-  return { path: root, name: path.basename(root), branch: branch.trim(), local, remote, ahead, behind, fileVersion, unpushed: ahead[branch.trim()] || 0, stashes: stash.trim().split('\n').filter(Boolean), staged, unstaged, commits: history };
+  const stashEntries = stash.trim().split('\n').filter(Boolean).map(line => { const fields = line.split('\t'); return { ref: fields[0], hash: fields[fields.length - 1], message: fields.slice(1, -1).join('\t') }; });
+  return { path: root, name: path.basename(root), branch: branch.trim(), local, remote, ahead, behind, fileVersion, unpushed: ahead[branch.trim()] || 0, stashes: stashEntries.map(entry => `${entry.ref}\t${entry.message}`), stashEntries, staged, unstaged, commits: history };
 }
 async function openRepository(folder) {
   if ((await git(folder, ['rev-parse', '--is-bare-repository'])).trim() === 'true') throw new Error('Bare repositories are not supported. Choose a repository working folder.');

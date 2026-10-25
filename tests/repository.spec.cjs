@@ -172,7 +172,8 @@ test('open repository, inspect history and working diffs without changing Git st
     await expect(page.getByRole('region', { name: 'Diff pane', exact: true })).toBeHidden();
     await page.locator('.commit-link').filter({ hasText: first.slice(0, 7) }).click({ button: 'right' });
     await expect(page.getByRole('menuitem')).toHaveCount(3);
-    await page.getByRole('menuitem', { name: 'Reset Branch To Commit' }).click();
+    await expect(page.getByRole('menuitem', { name: 'Reset Branch To Commit' })).toBeEnabled();
+    await page.keyboard.press('Escape');
     await page.locator('.wip-link').click();
     await expect(page.locator('.commit-information')).toHaveCount(0);
     await expect(page.getByRole('heading', { name: 'Working changes', exact: true })).toBeVisible();
@@ -186,7 +187,7 @@ test('open repository, inspect history and working diffs without changing Git st
     await page.keyboard.press('Escape');
     await page.getByLabel('Commit title', { exact: true }).fill('Draft only');
     await expect(page.locator('.commit-form').getByRole('button', { name: 'Commit', exact: true })).toBeEnabled();
-    for (const name of ['Branch']) await page.locator('.repo-buttons').getByRole('button', { name, exact: true }).click();
+
     await page.screenshot({ path: 'test-results/repository.png' });
     expect(git('status', '--porcelain')).toBe(before); expect(git('rev-parse', 'HEAD')).toBe(first);
   } finally { await app.close(); }

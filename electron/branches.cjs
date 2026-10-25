@@ -143,17 +143,18 @@ async function applyStash(root, input, profile) {
   if (input.deleteAfter === true) await dropStash(root, hash);
   return snapshot(root);
 }
-async function switchTo(root, ref) {
+async function switchTo(root, ref, name) {
   if (ref.startsWith('refs/heads/')) return git(root, ['switch', '--', ref.slice(11)]);
-  const locals = (await git(root, ['for-each-ref', '--format=%(refname)%09%(upstream)', 'refs/heads'])).trim().split('\n');
-  const tracking = locals.find(line => line.split('\t')[1] === ref)?.split('\t')[0];
-  if (tracking) return git(root, ['switch', '--', tracking.slice(11)]);
-  const name = ref.slice('refs/remotes/'.length).split('/').slice(1).join('/');
-  if (!name) throw new Error('Select a remote branch.');
   return git(root, ['switch', '--track', '-c', name, ref]);
 }
 async function switchBranch(root, input, profile) {
   await idle(root); const ref = await branchRef(root, input.ref);
+  if (ref.startsWith('refs/remotes/')) {
+    if (typeof input.name !== 'string' || !input.name.trim() || input.name.trim().startsWith('-')) throw new Error('Enter a name for the new local branch.');
+    input = { ...input, name: input.name.trim() };
+    await git(root, ['check-ref-format', `refs/heads/${input.name}`]);
+    if ((await git(root, ['for-each-ref', '--format=%(refname)', 'refs/heads'])).trim().split('\n').includes(`refs/heads/${input.name}`)) throw new Error('A local branch with this name already exists. Choose another name or check out the existing local branch.');
+  }
   const state = await snapshot(root), originalBranch = await attached(root), originalHead = await head(root);
   let savedStash;
   if (dirty(state)) {
@@ -167,7 +168,7 @@ async function switchBranch(root, input, profile) {
     }
   }
   try {
-    await switchTo(root, ref);
+    await switchTo(root, ref, input.name);
     if (savedStash) await applyStash(root, { hash: savedStash, deleteAfter: true }, profile);
   } catch (error) {
     if (savedStash) {

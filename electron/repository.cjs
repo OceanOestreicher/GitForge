@@ -14,18 +14,41 @@ async function commits(root, skip = 0) {
   const fields = raw.split('\0');
   const result = [];
   for (let i = 0; i + 5 < fields.length; i += 6) result.push({ hash: fields[i].trim(), parents: fields[i + 1].split(' ').filter(Boolean), author: fields[i + 2], date: fields[i + 3], subject: fields[i + 4], refs: fields[i + 5] });
+  const refs = await git(root, ['for-each-ref', '--format=%(refname)%00%(objectname)%00%(symref)', 'refs/heads', 'refs/remotes', 'refs/tags']);
+  const labels = new Map();
+  const add = (hash, name, kind) => {
+    if (!labels.has(hash)) labels.set(hash, new Map());
+    const key = `${kind === 'tag' ? 'tag' : kind === 'head' ? 'head' : 'branch'}:${name}`;
+    const entries = labels.get(hash);
+    const label = entries.get(key) || { name, local: false, remote: false, tag: false, head: false };
+    label[kind === 'head' ? 'local' : kind] = true;
+    if (kind === 'head') label.head = true;
+    entries.set(key, label);
+  };
+  for (const line of refs.trimEnd().split('\n').filter(Boolean)) {
+    const [ref, hash, symbolic] = line.split('\0');
+    if (symbolic) continue;
+    if (ref.startsWith('refs/heads/')) add(hash, ref.slice(11), 'local');
+    else if (ref.startsWith('refs/remotes/')) add(hash, ref.slice(13).split('/').slice(1).join('/'), 'remote');
+    else {
+      const target = (await git(root, ['rev-parse', '--verify', `${ref}^{commit}`]).catch(() => '')).trim();
+      if (target) add(target, ref.slice(10), 'tag');
+    }
+  }
+  if (!await git(root, ['symbolic-ref', '-q', 'HEAD']).catch(() => '')) add((await git(root, ['rev-parse', 'HEAD'])).trim(), 'HEAD', 'head');
+  for (const commit of result) commit.labels = [...(labels.get(commit.hash)?.values() || [])].sort((a, b) => Number(b.head) - Number(a.head) || Number(a.tag) - Number(b.tag) || a.name.localeCompare(b.name));
   return result;
 }
 async function snapshot(root) {
   const [branch, refs, stash, status, history] = await Promise.all([
     git(root, ['symbolic-ref', '--short', '-q', 'HEAD']).catch(async () => `Detached HEAD (${(await git(root, ['rev-parse', '--short', 'HEAD'])).trim()})`),
-    git(root, ['for-each-ref', '--format=%(refname:short)', 'refs/heads', 'refs/remotes']),
+    git(root, ['for-each-ref', '--format=%(refname)%00%(symref)', 'refs/heads', 'refs/remotes']),
     git(root, ['stash', 'list', '--format=%gd%x09%s%x09%H']),
     git(root, ['status', '--porcelain=v1', '-z', '--untracked-files=all']), commits(root)
   ]);
   const local = [], remote = [];
-  const fullRefs = (await git(root, ['for-each-ref', '--format=%(refname)', 'refs/heads', 'refs/remotes'])).trim().split('\n').filter(Boolean);
-  refs.trim().split('\n').filter(Boolean).forEach((name, i) => (fullRefs[i].startsWith('refs/heads/') ? local : remote).push(name));
+  const fullRefs = refs.trimEnd().split('\n').filter(Boolean).map(line => line.split('\0')).filter(([, symbolic]) => !symbolic).map(([ref]) => ref);
+  fullRefs.forEach(ref => ref.startsWith('refs/heads/') ? local.push(ref.slice(11)) : remote.push(ref.slice(13)));
   const staged = [], unstaged = [];
   const entries = status.split('\0');
   for (let i = 0; i < entries.length; i++) {

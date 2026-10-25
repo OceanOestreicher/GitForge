@@ -31,6 +31,57 @@ test('branch dialog creates a checked-out local branch without an upstream; comm
   await action({ action: 'create', hash: initial, name: 'from-commit' }); expect(git('branch', '--show-current')).toBe('from-commit');
 });
 
+test('history groups local/remote tips, expands compound labels and adds HEAD only while detached', async () => {
+  git('update-ref', 'refs/remotes/origin/main', initial); git('update-ref', 'refs/remotes/origin/feature', initial);
+  git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+  const row = page.locator('.history-table tbody tr').filter({ has: page.locator('.commit-link').filter({ hasText: initial.slice(0, 7) }) });
+  await expect(page.getByRole('columnheader', { name: 'Branch / Tag', exact: true })).toBeVisible();
+  await expect(row.locator('.branch-extra-count')).toHaveText('+1');
+  await row.locator('.history-branches').hover();
+  const list = row.locator('.branch-hover-list'); await expect(list).toBeVisible();
+  await expect(list.locator('.history-branch-label')).toHaveCount(2);
+  for (const name of ['main', 'feature']) {
+    const label = list.locator('.history-branch-label').filter({ hasText: new RegExp(`^${name}$`) });
+    await expect(label.getByRole('img', { name: 'Local branch', exact: true })).toBeVisible();
+    await expect(label.getByRole('img', { name: 'Remote branch', exact: true })).toBeVisible();
+  }
+  await expect(list).not.toContainText('HEAD'); await expect(row.locator('.commit-link')).not.toContainText('main');
+  await page.getByRole('columnheader', { name: 'Commit', exact: true }).hover(); await expect(list).toBeHidden();
+  await write('a.txt', 'next commit\n'); git('add', '.'); git('commit', '-m', 'Move main');
+  await expect(row.locator('.branch-summary').getByRole('img', { name: 'Local branch', exact: true })).toHaveCount(1);
+  await action({ action: 'checkout', hash: initial });
+  await expect(row.locator('.branch-summary')).toContainText('HEAD');
+  await expect(row.locator('.branch-summary').getByRole('img', { name: 'Local branch', exact: true })).toBeVisible();
+  await expect(row.locator('.branch-extra-count')).toHaveText('+2');
+  await action({ action: 'switch', ref: 'refs/heads/main' }); await expect(page.locator('.detached-label')).toHaveCount(0);
+  git('tag', '-a', 'v1', '-m', 'Release', initial); await row.locator('.history-branches').hover();
+  await expect(row.locator('.branch-hover-list').getByRole('img', { name: 'Tag', exact: true })).toBeVisible();
+});
+
+test('remote checkout prompts for a new local branch, allows cancel and handles dirty files', async () => {
+  git('remote', 'add', 'origin', root); git('update-ref', 'refs/remotes/origin/feature', initial);
+  git('update-ref', 'refs/remotes/origin/origin', initial); git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/feature');
+  await page.locator('summary').filter({ hasText: /^Remote branches$/ }).click();
+  const remoteRows = page.locator('.sidebar-group').nth(1).locator('.branch-row');
+  await expect(remoteRows).toHaveText(['feature', 'origin']);
+  await remoteRows.filter({ hasText: /^feature$/ }).dblclick();
+  const dialog = page.getByRole('dialog', { name: 'Create Local Branch', exact: true }); await expect(dialog).toBeVisible();
+  await expect(dialog.getByLabel('Branch name', { exact: true })).toHaveValue('feature');
+  await dialog.getByRole('button', { name: 'Cancel', exact: true }).click(); expect(git('branch', '--show-current')).toBe('main');
+  await write('a.txt', 'staged work\n'); git('add', 'a.txt'); await write('a.txt', 'unstaged work\n'); await write('new.txt', 'untracked\n');
+  await expect(page.getByRole('region', { name: 'Unstaged files', exact: true })).toContainText('new.txt');
+  await remoteRows.filter({ hasText: /^feature$/ }).dblclick();
+  await dialog.getByLabel('Branch name', { exact: true }).fill('from-remote');
+  await expect(dialog.getByRole('button', { name: 'Confirm', exact: true })).toBeDisabled();
+  await dialog.getByLabel('Stash and apply on the new branch').check();
+  await dialog.getByRole('button', { name: 'Confirm', exact: true }).click(); await expect(dialog).toHaveCount(0);
+  expect(git('branch', '--show-current')).toBe('from-remote'); expect(git('for-each-ref', '--format=%(upstream)', 'refs/heads/from-remote')).toBe('refs/remotes/origin/feature');
+  expect(git('show', ':a.txt')).toBe('staged work'); expect(await read('a.txt')).toBe('unstaged work\n'); expect(await read('new.txt')).toBe('untracked\n');
+  await remoteRows.filter({ hasText: /^feature$/ }).dblclick(); await dialog.getByLabel('Discard changes', { exact: true }).check();
+  await dialog.getByRole('button', { name: 'Confirm', exact: true }).click();
+  await expect(dialog.getByRole('alert')).toContainText('already exists'); expect(git('branch', '--show-current')).toBe('from-remote'); expect(await read('new.txt')).toBe('untracked\n');
+});
+
 test('delete branch confirms deletion, preserves working files and remote refs, and rejects current branch', async () => {
   git('switch', 'feature'); await write('feature.txt', 'exclusive commit\n'); git('add', '.'); git('commit', '-m', 'Feature only'); git('switch', 'main');
   git('update-ref', 'refs/remotes/origin/feature', git('rev-parse', 'feature'));
@@ -109,7 +160,7 @@ test('branch remote menu fetches, pulls and pushes the selected inactive branch 
   await expect(feature.locator('.ahead-count')).toHaveCount(0);
   expect(git('--git-dir', remote, 'rev-parse', 'feature')).toBe(localHead); expect(git('--git-dir', remote, 'rev-parse', 'main')).toBe(main); expect(git('branch', '--show-current')).toBe('main');
   await page.locator('summary').filter({ hasText: /^Remote branches$/ }).click();
-  await page.locator('.sidebar-group').nth(1).locator('.branch-row').filter({ hasText: /^origin\/feature$/ }).click({ button: 'right' });
+  await page.locator('.sidebar-group').nth(1).locator('.branch-row').filter({ hasText: /^feature$/ }).click({ button: 'right' });
   group = page.getByRole('group', { name: 'Remote actions', exact: true });
   await expect(group.getByRole('menuitem', { name: 'Pull', exact: true })).toBeDisabled(); await expect(group.getByRole('menuitem', { name: 'Push', exact: true })).toBeDisabled(); await expect(group.getByRole('menuitem', { name: 'Fetch', exact: true })).toBeEnabled();
 });
@@ -132,7 +183,7 @@ test('dirty branch switching preserves index and untracked data, supports discar
   await action({ action: 'switch', ref: 'refs/heads/main', strategy: 'discard' }); expect(git('status', '--porcelain')).toBe('');
   git('remote', 'add', 'origin', root); git('update-ref', 'refs/remotes/origin/remote-work', initial);
   git('config', 'remote.origin.fetch', '+refs/heads/*:refs/remotes/origin/*');
-  await action({ action: 'switch', ref: 'refs/remotes/origin/remote-work' });
+  await action({ action: 'switch', ref: 'refs/remotes/origin/remote-work', name: 'remote-work' });
   expect(git('branch', '--show-current')).toBe('remote-work'); expect(git('for-each-ref', '--format=%(upstream)', 'refs/heads/remote-work')).toBe('refs/remotes/origin/remote-work');
 });
 

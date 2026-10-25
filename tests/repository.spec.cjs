@@ -111,7 +111,8 @@ test('open repository, inspect history and working diffs without changing Git st
     await expect(page.getByRole('tab', { name: path.basename(root), exact: true })).toBeVisible();
     await expect(page.locator('.repo-name')).toContainText('main');
     await expect(page.locator('.repo-sidebar')).toContainText('feature');
-    await expect(page.locator('.repo-sidebar')).toContainText('origin/main');
+    await expect(page.locator('.sidebar-group').nth(1)).toContainText('main');
+    await expect(page.locator('.sidebar-group').nth(1)).not.toContainText('origin/');
     await expect(page.locator('.repo-sidebar')).toContainText('Fixture stash');
     for (const name of ['Local branches', 'Remote branches', 'Stashes']) {
       const group = page.locator('.sidebar-group').filter({ has: page.locator('summary', { hasText: name }) });

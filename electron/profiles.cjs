@@ -5,7 +5,10 @@ const path = require('node:path');
 function createProfileStore(directory, safeStorage, verify) {
   const db = new DatabaseSync(path.join(directory, 'gitforge.sqlite'));
   db.exec('PRAGMA busy_timeout=5000; CREATE TABLE IF NOT EXISTS profiles (id TEXT PRIMARY KEY, name TEXT NOT NULL, username TEXT NOT NULL, email TEXT NOT NULL, pat BLOB NOT NULL, active INTEGER NOT NULL DEFAULT 0); CREATE UNIQUE INDEX IF NOT EXISTS one_active_profile ON profiles(active) WHERE active=1');
-  const list = () => db.prepare('SELECT id, name, username, email, active FROM profiles').all().map(row => ({ ...row, active: Boolean(row.active) })).sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
+  const columns = db.prepare('PRAGMA table_info(profiles)').all().map(column => column.name);
+  if (!columns.includes('pat_expires_at')) db.exec('ALTER TABLE profiles ADD COLUMN pat_expires_at TEXT');
+  if (!columns.includes('pat_invalid')) db.exec('ALTER TABLE profiles ADD COLUMN pat_invalid INTEGER NOT NULL DEFAULT 0');
+  const list = () => db.prepare('SELECT id, name, username, email, active, pat_expires_at AS expiresAt, pat_invalid AS patInvalid FROM profiles').all().map(row => ({ ...row, active: Boolean(row.active), patInvalid: Boolean(row.patInvalid) })).sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
   const encrypt = pat => {
     if (!safeStorage.isEncryptionAvailable()) throw new Error('Windows credential encryption is unavailable. Profile credentials could not be saved.');
     return safeStorage.encryptString(pat);
@@ -24,6 +27,19 @@ function createProfileStore(directory, safeStorage, verify) {
   const exists = id => { if (typeof id !== 'string' || !db.prepare('SELECT id FROM profiles WHERE id=?').get(id)) throw new Error('The profile no longer exists.'); };
   return {
     list,
+    async refreshActive() {
+      const profile = db.prepare('SELECT id,username,pat FROM profiles WHERE active=1').get();
+      if (!profile) return list();
+      try {
+        const pat = safeStorage.decryptString(Buffer.from(profile.pat));
+        const status = await verify(profile.username, pat);
+        db.prepare('UPDATE profiles SET pat_expires_at=?,pat_invalid=0 WHERE id=? AND pat=? AND username=?').run(status?.expiresAt ?? null, profile.id, profile.pat, profile.username);
+      } catch (error) {
+        if (error.code === 'PAT_INVALID') db.prepare('UPDATE profiles SET pat_invalid=1 WHERE id=? AND pat=? AND username=?').run(profile.id, profile.pat, profile.username);
+        // Offline, rate-limit and server failures do not imply token expiration.
+      }
+      return list();
+    },
     credentials() {
       const profile = db.prepare('SELECT username,pat FROM profiles WHERE active=1').get();
       if (!profile) throw new Error('Create and select a profile before cloning.');
@@ -32,8 +48,8 @@ function createProfileStore(directory, safeStorage, verify) {
     },
     async create(input) {
       const data = validate(input, true), encrypted = encrypt(data.pat);
-      await verify(data.username, data.pat);
-      return transaction(() => db.prepare('INSERT INTO profiles VALUES (?, ?, ?, ?, ?, ?)').run(randomUUID(), data.name, data.username, data.email, encrypted, list().length === 0 ? 1 : 0));
+      const status = await verify(data.username, data.pat);
+      return transaction(() => db.prepare('INSERT INTO profiles (id,name,username,email,pat,active,pat_expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(randomUUID(), data.name, data.username, data.email, encrypted, list().length === 0 ? 1 : 0, status?.expiresAt ?? null));
     },
     async edit(id, input) {
       exists(id); const data = validate(input, false);
@@ -42,10 +58,11 @@ function createProfileStore(directory, safeStorage, verify) {
         try { pat = safeStorage.decryptString(Buffer.from(db.prepare('SELECT pat FROM profiles WHERE id=?').get(id).pat)); }
         catch { throw new Error('The saved PAT could not be decrypted. Enter a new PAT and try again.'); }
       }
-      await verify(data.username, pat);
+      const status = await verify(data.username, pat);
       exists(id);
       if (data.pat.trim()) db.prepare('UPDATE profiles SET name=?,username=?,email=?,pat=? WHERE id=?').run(data.name, data.username, data.email, encrypt(data.pat), id);
       else db.prepare('UPDATE profiles SET name=?,username=?,email=? WHERE id=?').run(data.name, data.username, data.email, id);
+      db.prepare('UPDATE profiles SET pat_expires_at=?,pat_invalid=0 WHERE id=?').run(status?.expiresAt ?? null, id);
       return list();
     },
     switch(id) { exists(id); return transaction(() => { db.exec('UPDATE profiles SET active=0'); db.prepare('UPDATE profiles SET active=1 WHERE id=?').run(id); }); },

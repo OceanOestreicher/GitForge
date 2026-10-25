@@ -13,6 +13,7 @@ declare global {
     gitforge: {
       gitStatus(): Promise<boolean>;
       listProfiles(): Promise<Profile[]>;
+      refreshProfileStatus(): Promise<Profile[]>;
       createProfile(input: ProfileInput): Promise<Profile[]>;
       editProfile(id: string, input: ProfileInput): Promise<Profile[]>;
       switchProfile(id: string): Promise<Profile[]>;
@@ -48,6 +49,17 @@ function App() {
   const [sessionReady, setSessionReady] = useState(false);
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const activeProfile = profiles.find(profile => profile.active);
+  const [profileTime, setProfileTime] = useState(Date.now());
+  const expiration = activeProfile?.expiresAt ? Date.parse(activeProfile.expiresAt) : NaN;
+  const profileWarning = activeProfile?.patInvalid ? 'The active profile PAT has expired or is no longer valid. Edit this profile to replace it.' : Number.isFinite(expiration) && expiration <= profileTime ? 'The active profile PAT has expired. Edit this profile to replace it.' : Number.isFinite(expiration) && expiration - profileTime <= 2 * 24 * 60 * 60 * 1000 ? 'The active profile PAT expires within 2 days. Edit this profile to replace it.' : '';
+  useEffect(() => {
+    let alive = true;
+    const refresh = async () => { try { const values = await window.gitforge.refreshProfileStatus(); if (alive) { setProfiles(values); setProfileTime(Date.now()); } } catch { /* Keep cached status while offline. */ } };
+    const startup = setTimeout(() => { if (activeProfile) void refresh(); }, 5000);
+    const remote = setInterval(() => { if (activeProfile) void refresh(); }, 5 * 60 * 1000);
+    const clock = setInterval(() => setProfileTime(Date.now()), 60 * 1000);
+    return () => { alive = false; clearTimeout(startup); clearInterval(remote); clearInterval(clock); };
+  }, [activeProfile?.id]);
   const profileRequired = profiles.length === 0;
   const [tabs, setTabs] = useState<number[]>([1]);
   const [repositories, setRepositories] = useState<Record<number, Repository>>({});
@@ -157,6 +169,7 @@ function App() {
       {overflowing && <button className="icon scroll" aria-label="Scroll tabs right" onClick={() => tabStrip.current?.scrollBy({ left: 240, behavior: 'smooth' })}>›</button>}
       <button className="icon" aria-label="New Tab" title="New Tab (Ctrl+T)" onClick={newTab}>+</button>
       </div>
+      {activeProfile && profileWarning && <span className="profile-token-warning" role="img" aria-label={profileWarning} title={profileWarning}><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2 19 18H1Z"/><path d="M10 7v5M10 15v.5"/></svg></span>}
       {activeProfile && <span className="active-profile-name" aria-label="Active profile name" title={activeProfile.name}>{activeProfile.name}</span>}
       <button className={`icon settings ${preferences ? 'selected' : ''}`} disabled={profileRequired} aria-label="Preferences" aria-pressed={preferences || profileRequired} title="Preferences" onClick={() => { setPreferences(previous => !previous); }}>⚙</button>
     </header>

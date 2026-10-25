@@ -82,6 +82,11 @@ app.whenReady().then(async () => {
   };
   updateMenu();
   ipcMain.handle('list-profiles', () => profiles.list());
+  let checkingProfile;
+  ipcMain.handle('refresh-profile-status', () => {
+    if (!checkingProfile) checkingProfile = profiles.refreshActive().finally(() => { checkingProfile = null; });
+    return checkingProfile;
+  });
   for (const [channel, method] of [['create-profile', 'create'], ['edit-profile', 'edit'], ['switch-profile', 'switch'], ['delete-profile', 'delete']]) {
     ipcMain.handle(channel, async (_event, ...args) => { const result = await profiles[method](...args); updateMenu(); return result; });
   }
@@ -125,10 +130,10 @@ app.whenReady().then(async () => {
   ipcMain.handle('push-commits', (_event, root, input) => mutate(root, () => pushing.push(root, input, profiles.credentials(), (...args) => net.fetch(...args))));
   ipcMain.handle('fetch-repository', (_event, root, ref) => mutate(root, async () => publish(await (ref ? pulling.fetchBranch(root, profiles.credentials(), ref) : pulling.fetchRemotes(root, profiles.credentials())))));
   ipcMain.handle('pull-repository', (_event, root, branch) => mutate(root, async () => publish(await (branch ? pulling.pullBranch(root, profiles.credentials(), activeProfile(), branch) : pulling.pull(root, profiles.credentials(), activeProfile())))));
-  const branchActions = { 'switch': 'switchBranch', 'create': 'createBranch', 'checkout': 'checkoutCommit', 'reset': 'reset', 'merge': 'merge', 'stash': 'stash', 'apply-stash': 'applyStash', 'delete-stash': 'drop', 'delete-branch': 'deleteBranch' };
+  const branchActions = { 'switch': 'switchBranch', 'create': 'createBranch', 'checkout': 'checkoutCommit', 'reset': 'reset', 'merge': 'merge', 'stash': 'stash', 'apply-stash': 'applyStash', 'delete-stash': 'drop', 'delete-branch': 'deleteBranch', 'delete-remote-branch': 'deleteRemoteBranch' };
   ipcMain.handle('branch-action', (_event, root, input) => mutate(root, async () => {
     if (!input || !Object.hasOwn(branchActions, input.action)) throw new Error('Invalid repository action.');
-    return publish(await branches[branchActions[input.action]](root, input, activeProfile(), input.action === 'delete-branch' && input.deleteRemote === true ? profiles.credentials() : undefined));
+    return publish(await branches[branchActions[input.action]](root, input, activeProfile(), (input.action === 'delete-remote-branch' || (input.action === 'delete-branch' && input.deleteRemote === true)) ? profiles.credentials() : undefined));
   }));
   ipcMain.handle('can-reset-commit', async (_event, root, hash) => {
     requireProfile(); if (!opened.has(root)) throw new Error('Open this repository first.');

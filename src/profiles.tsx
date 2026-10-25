@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 
-export type Profile = { id: string; name: string; username: string; email: string; active: boolean };
+export type Profile = { id: string; name: string; username: string; email: string; active: boolean; expiresAt: string | null; patInvalid: boolean };
 export type ProfileInput = { name: string; username: string; email: string; pat: string };
 
 function ProfileForm({ profile, close, saved }: { profile: Profile | null; close: () => void; saved: (profiles: Profile[]) => void }) {

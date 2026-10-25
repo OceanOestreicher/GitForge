@@ -137,3 +137,68 @@ test('cancel discards profile creation and edits', async () => {
     await expect(page.locator('.profiles-table')).not.toContainText('Discard');
   } finally { await app.close(); }
 });
+
+test('active profile warns within two days or after expiration, preserves status offline, and clears after token replacement', async () => {
+  let app = await launchElectron();
+  try {
+    let page = await app.firstWindow();
+    const warning = () => page.locator('.profile-token-warning');
+    await expect(warning()).toHaveCount(0);
+    const response = async (expiresAt, status = 200) => app.evaluate(({ net }, input) => {
+      net.fetch = async () => {
+        if (!input.status) throw new Error('Offline');
+        return { ok: input.status === 200, status: input.status, headers: { get: name => name.toLowerCase() === 'github-authentication-token-expiration' ? input.expiresAt : null }, json: async () => ({ login: 'fixture' }) };
+      };
+    }, { expiresAt, status });
+    const refresh = async () => { await page.evaluate(() => window.gitforge.refreshProfileStatus()); await page.reload(); await expect(page.getByLabel('Active profile name', { exact: true })).toHaveText('Test profile'); };
+    for (const [hours, shown] of [[72, false], [49, false], [47, true], [-1, true]]) {
+      await response(new Date(Date.now() + hours * 3600000).toISOString()); await refresh();
+      await expect(warning()).toHaveCount(shown ? 1 : 0);
+      if (shown) await expect(warning()).toHaveAttribute('title', hours < 0 ? /has expired/ : /within 2 days/);
+    }
+    await response(null, 0); await refresh(); await expect(warning()).toHaveCount(1);
+    await response(null); await refresh(); await expect(warning()).toHaveCount(0);
+    await response(null, 403); await refresh(); await expect(warning()).toHaveCount(0);
+    await response(null, 401); await refresh(); await expect(warning()).toHaveAttribute('title', /expired or is no longer valid/);
+    await app.close(); app = await launchElectron(); page = await app.firstWindow(); await expect(warning()).toHaveCount(1);
+    await response(new Date(Date.now() + 90 * 86400000).toISOString());
+    await page.getByRole('button', { name: 'Preferences', exact: true }).click(); await action(page, 'Test profile', 'Edit');
+    await page.getByLabel('GitHub PAT', { exact: true }).fill('replacement-fixture-pat'); await page.getByRole('button', { name: 'Save Changes', exact: true }).click();
+    await expect(page.getByRole('dialog')).toHaveCount(0); await expect(warning()).toHaveCount(0);
+    const profiles = await page.evaluate(() => window.gitforge.listProfiles()); expect(profiles[0].patInvalid).toBe(false); expect(profiles[0]).not.toHaveProperty('pat');
+    await response(new Date(Date.now() + 3600000).toISOString());
+    const second = await page.evaluate(() => window.gitforge.createProfile({ name: 'Other', username: 'fixture', email: 'other@example.com', pat: 'other-fake-pat' }));
+    const id = second.find(profile => profile.name === 'Other').id;
+    await page.evaluate(id => window.gitforge.switchProfile(id), id); await page.reload(); await expect(warning()).toHaveCount(1);
+    await page.evaluate(id => window.gitforge.switchProfile(id), profiles[0].id); await page.reload(); await expect(warning()).toHaveCount(0);
+  } finally { await app.close(); }
+});
+
+test('profile expiration migration preserves existing encrypted profile credentials', async () => {
+  let app = await launchElectron(); const token = Buffer.from(stored('Test profile').pat);
+  await app.close();
+  const db = new DatabaseSync(path.join(test.info().outputPath('application-data'), 'gitforge.sqlite'));
+  db.exec('ALTER TABLE profiles DROP COLUMN pat_expires_at; ALTER TABLE profiles DROP COLUMN pat_invalid'); db.close();
+  app = await launchElectron();
+  try {
+    const page = await app.firstWindow(); await expect(page.getByLabel('Active profile name', { exact: true })).toHaveText('Test profile');
+    expect(Buffer.from(stored('Test profile').pat).equals(token)).toBe(true); expect(stored('Test profile').pat_expires_at).toBe(null);
+  } finally { await app.close(); }
+});
+
+test('PAT status refresh and the warning update automatically as the token approaches expiration', async () => {
+  const app = await launchElectron();
+  try {
+    const page = await app.firstWindow(), now = Date.now(), expiresAt = new Date(now + (48 * 60 + 2) * 60000).toISOString();
+    await app.evaluate(({ net }, expiresAt) => {
+      net.fetch = async () => ({ ok: true, status: 200, headers: { get: name => name === 'github-authentication-token-expiration' ? expiresAt : null }, json: async () => ({ login: 'fixture' }) });
+    }, expiresAt);
+    await page.clock.install({ time: new Date(now) }); await page.reload(); await expect(page.getByLabel('Active profile name', { exact: true })).toHaveText('Test profile');
+    await page.clock.runFor(5100); await expect.poll(async () => (await page.evaluate(() => window.gitforge.listProfiles()))[0].expiresAt).toBe(expiresAt);
+    await expect(page.locator('.profile-token-warning')).toHaveCount(0);
+    await page.clock.setSystemTime(new Date(now + 3 * 60000)); await page.clock.runFor(60000);
+    await expect(page.locator('.profile-token-warning')).toHaveAttribute('title', /within 2 days/);
+    await page.clock.setSystemTime(new Date(now + 49 * 3600000)); await page.clock.runFor(60000);
+    await expect(page.locator('.profile-token-warning')).toHaveAttribute('title', /has expired/);
+  } finally { await app.close(); }
+});

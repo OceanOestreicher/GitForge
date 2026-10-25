@@ -2,6 +2,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('gitforge', {
   gitStatus: () => ipcRenderer.invoke('git-status'),
   listProfiles: () => ipcRenderer.invoke('list-profiles'),
+  refreshProfileStatus: () => ipcRenderer.invoke('refresh-profile-status'),
   createProfile: input => ipcRenderer.invoke('create-profile', input),
   editProfile: (id, input) => ipcRenderer.invoke('edit-profile', id, input),
   switchProfile: id => ipcRenderer.invoke('switch-profile', id),

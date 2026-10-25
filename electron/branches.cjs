@@ -222,6 +222,20 @@ async function merge(root, input, profile) {
   return snapshot(root);
 }
 async function drop(root, input) { await idle(root); await requireStash(root, input.hash); await dropStash(root, input.hash); return snapshot(root); }
+async function deleteRemoteBranch(root, input, _profile, credentials) {
+  await idle(root);
+  const ref = await branchRef(root, input.ref);
+  if (!ref.startsWith('refs/remotes/')) throw new Error('Select a remote branch to delete.');
+  const remotes = (await git(root, ['remote'])).trim().split('\n').filter(Boolean).sort((a, b) => b.length - a.length);
+  const remote = remotes.find(name => ref.startsWith(`refs/remotes/${name}/`));
+  if (!remote) throw new Error('The selected remote no longer exists.');
+  const branch = ref.slice(`refs/remotes/${remote}/`.length);
+  await require('./push.cjs').remoteGit(root, ['push', '--', remote, `:refs/heads/${branch}`], credentials, 'delete the remote branch');
+  await git(root, ['update-ref', '-d', ref]);
+  // Keep upstream configuration so a later push recreates the same destination.
+  // The absent remote ref makes corresponding local branches appear unpublished.
+  return snapshot(root);
+}
 async function deleteBranch(root, input, _profile, credentials) {
   await idle(root);
   const ref = await branchRef(root, input.ref);
@@ -236,4 +250,4 @@ async function deleteBranch(root, input, _profile, credentials) {
   await git(root, ['branch', '-D', '--', ref.slice(11)]);
   return snapshot(root);
 }
-module.exports = { canReset, stash, applyStash, switchBranch, createBranch, checkoutCommit, reset, merge, drop, deleteBranch };
+module.exports = { canReset, stash, applyStash, switchBranch, createBranch, checkoutCommit, reset, merge, drop, deleteBranch, deleteRemoteBranch };

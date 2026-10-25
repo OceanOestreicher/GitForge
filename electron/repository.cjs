@@ -86,6 +86,7 @@ async function correspondingRemote(root, name, refs, upstream) {
     const branch = (await git(root, ['config', '--get', `branch.${name}.merge`]).catch(() => '')).trim();
     if (remotes.includes(remote) && branch.startsWith('refs/heads/')) return { ref: upstream, remote, branch };
   }
+  if (upstream) return null;
   const matching = remotes.filter(remote => refs.includes(`refs/remotes/${remote}/${name}`));
   const remote = matching.includes('origin') ? 'origin' : matching.length === 1 ? matching[0] : null;
   return remote ? { ref: `refs/remotes/${remote}/${name}`, remote, branch: `refs/heads/${name}` } : null;

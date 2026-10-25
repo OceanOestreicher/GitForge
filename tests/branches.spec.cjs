@@ -131,6 +131,27 @@ test('branch deletion optionally removes the configured remote branch and retain
   await expect(feature).toHaveCount(0); expect(git('ls-remote', '--heads', 'origin', 'refs/heads/published')).toBe(''); expect(git('for-each-ref', '--format=%(refname)', 'refs/remotes/origin/published')).toBe('');
 });
 
+test('deleting a remote branch retains its checked-out local branch and allows recreating the remote by pushing', async () => {
+  const remote = test.info().outputPath('remote-delete.git'); git('init', '--bare', remote); git('remote', 'add', 'origin', remote);
+  git('push', '-u', 'origin', 'main'); const head = git('rev-parse', 'HEAD');
+  await page.locator('summary').filter({ hasText: /^Remote branches$/ }).click();
+  const remoteRow = page.locator('.sidebar-group').nth(1).locator('.branch-row').filter({ hasText: /^main$/ });
+  const local = page.locator('.sidebar-group').first().locator('.current-branch');
+  await expect(remoteRow).toBeVisible(); await remoteRow.click({ button: 'right' }); await page.getByRole('menuitem', { name: 'Delete Branch', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'Delete Remote Branch' })).toContainText('Local branches and their files will be kept');
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click(); expect(git('ls-remote', '--heads', 'origin', 'main')).toBeTruthy();
+  await remoteRow.click({ button: 'right' }); await page.getByRole('menuitem', { name: 'Delete Branch', exact: true }).click();
+  git('remote', 'set-url', 'origin', remote + '-missing'); await page.getByRole('button', { name: 'Confirm', exact: true }).click();
+  await expect(page.getByRole('dialog').getByRole('alert')).toBeVisible(); expect(git('rev-parse', 'refs/remotes/origin/main')).toBe(head);
+  git('remote', 'set-url', 'origin', remote); await page.getByRole('button', { name: 'Confirm', exact: true }).click();
+  await expect(remoteRow).toHaveCount(0); await expect(local).toHaveClass(/local-only-branch/); await expect(local.locator('.ahead-count')).toHaveCount(0);
+  expect(git('rev-parse', 'main')).toBe(head); expect(git('branch', '--show-current')).toBe('main'); expect(git('ls-remote', '--heads', 'origin', 'main')).toBe('');
+  await page.locator('.repo-buttons').getByRole('button', { name: 'Push', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'Create Remote Branch' })).toBeVisible();
+  await page.getByRole('button', { name: 'Create and Push', exact: true }).click(); await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(local).not.toHaveClass(/local-only-branch/); await expect(remoteRow).toBeVisible(); expect(git('--git-dir', remote, 'rev-parse', 'main')).toBe(head);
+});
+
 test('branch remote menu fetches, pulls and pushes the selected inactive branch without switching the workspace', async () => {
   const remote = test.info().outputPath('network.git'), seed = test.info().outputPath('seed');
   git('init', '--bare', remote); git('remote', 'add', 'origin', remote); git('push', '-u', 'origin', 'main', 'feature');

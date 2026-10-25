@@ -114,6 +114,22 @@ test('keeping only local changes still permits the pending merge commit when the
   await expect(page.getByRole('button', { name: 'Commit', exact: true })).toBeEnabled(); await page.getByRole('button', { name: 'Commit', exact: true }).click(); await expect(page.locator('.history')).toContainText('Keep local resolution'); expect(git('show', '-s', '--format=%P')).toBe(`${head} ${incoming}`);
 });
 
+for (const choice of ['ours', 'theirs']) test(`abort a resolved merge from Working changes after keeping ${choice === 'ours' ? 'local changes with no file diff' : 'incoming changes'}`, async () => {
+  const { head } = await simpleConflict(); await open();
+  await expect(page.getByRole('button', { name: 'Abort Merge', exact: true })).toHaveCount(0);
+  await action({ action: 'merge', ref: 'refs/heads/feature' }); await choose(choice); await expect(dialog()).toHaveCount(0);
+  if (choice === 'ours') {
+    expect(git('diff', '--cached')).toBe('');
+    await app.close(); app = await launchElectron(); page = await app.firstWindow();
+  } else expect(git('diff', '--cached', '--name-only')).toBe('a.txt');
+  const abort = page.locator('.commit-actions').getByRole('button', { name: 'Abort Merge', exact: true });
+  await expect(abort).toBeVisible(); await expect(abort).toBeEnabled();
+  await abort.click(); await expect(abort).toHaveCount(0);
+  expect(git('rev-parse', 'HEAD')).toBe(head); expect(git('status', '--porcelain')).toBe(''); expect(await read('a.txt')).toBe('local\n');
+  await expect(page.getByRole('button', { name: 'Commit', exact: true })).toBeDisabled();
+  await expect(page.evaluate(root => window.gitforge.conflictAction(root, { action: 'abort' }), root)).rejects.toThrow(/no pending merge/);
+});
+
 test('outside edits are not overwritten when resolving a conflict', async () => {
   await simpleConflict(); await open(); await action({ action: 'merge', ref: 'refs/heads/feature' });
   await write('a.txt', 'outside edits\n'); await choose('theirs'); await expect(dialog().getByRole('alert')).toContainText('changed outside GitForge'); expect(await read('a.txt')).toBe('outside edits\n');

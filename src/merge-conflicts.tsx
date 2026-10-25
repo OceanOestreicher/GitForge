@@ -2,7 +2,7 @@ import { Message } from './messages';
 import { useEffect, useRef, useState } from 'react';
 type ConflictLine = { text: string; number: number | null; conflict: boolean };
 export type Conflict = { id: string; kind: 'merge' | 'pull' | 'stash'; index: number; total: number; path: string; ours: string; theirs: string; oursLines: ConflictLine[]; theirsLines: ConflictLine[]; canBoth: boolean };
-export type ConflictAction = { action: 'abort' | 'resolve'; id: string; index?: number; choice?: 'ours' | 'theirs' | 'both' };
+export type ConflictAction = { action: 'abort' | 'resolve'; id?: string; index?: number; choice?: 'ours' | 'theirs' | 'both' };
 
 function ConflictCode({ lines }: { lines: ConflictLine[] }) {
   return <pre className="merge-code">{lines.map((line, index) => <span key={index} className={`merge-code-row${line.conflict ? ' merge-conflict-line' : ''}`}><span className="merge-line-number" aria-label="Line number">{line.number ?? ''}</span><span className="merge-line-text">{line.text || ' '}</span></span>)}</pre>;

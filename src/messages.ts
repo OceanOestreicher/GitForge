@@ -85,6 +85,7 @@ export const Message = Object.freeze({
   "merge.failed": "Git could not merge this branch. Check its history and Git hooks.",
   "merge.localBranchRequired": "Check out a local branch before merging.",
   "merge.otherBranchRequired": "Select a different branch to merge.",
+  "merge.nonePending": "There is no pending merge to abort.",
   "merge.pending": "Finish or abort the existing merge before continuing.",
   "operation.failed": "The operation failed.",
   "operation.inProgress": "Wait for the current operation to finish.",

@@ -101,6 +101,11 @@ async function restoreStashState(root, session) {
 }
 async function abort(root, input) {
   const session = await load(root);
+  if (!session && input.id === undefined) {
+    if (!(await git(root, ['rev-parse', '-q', '--verify', 'MERGE_HEAD']).catch(() => '')).trim()) throw new Error(Message["merge.nonePending"]);
+    await git(root, ['merge', '--abort']);
+    return require('./repository.cjs').snapshot(root);
+  }
   if (!session || session.id !== input.id) throw new Error(Message["conflict.sessionExpired"]);
   if ((await git(root, ['rev-parse', 'HEAD'])).trim() !== session.originalHead) throw new Error(Message["conflict.headChanged"]);
   if (session.kind === 'stash') await restoreStashState(root, session);

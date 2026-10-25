@@ -1,5 +1,6 @@
 const { test, expect } = require('@playwright/test');
 const { launchElectron } = require('./launch.cjs');
+const { Message } = require('../dist-electron/messages.cjs');
 const { execFileSync } = require('node:child_process');
 const fs = require('node:fs/promises');
 const path = require('node:path');
@@ -35,20 +36,19 @@ test('invalid branch names show plain-English errors and allow correction withou
   await page.locator('.repo-buttons').getByRole('button', { name: 'Branch', exact: true }).click();
   const form = page.getByRole('dialog', { name: 'Create Branch', exact: true });
   await form.getByLabel('Branch name', { exact: true }).fill('Merge 1'); await form.getByRole('button', { name: 'Create Branch', exact: true }).click();
-  await expect(form.getByRole('alert')).toContainText('Branch names cannot contain spaces');
-  const rules = await form.getByRole('alert').textContent();
-  for (const character of ['~', '^', ':', '?', '*', '[', '\\', '..', '@{', '//', '.lock']) expect(rules).toContain(character);
+  const rules = Message['branch.name.invalid'];
+  await expect(form.getByRole('alert')).toHaveText(rules);
   await expect(form.getByRole('alert')).not.toContainText('check-ref-format');
   expect(git('branch', '--show-current')).toBe('main'); expect(git('rev-parse', 'HEAD')).toBe(initial);
   await form.getByLabel('Branch name', { exact: true }).fill('bad..name'); await form.getByRole('button', { name: 'Create Branch', exact: true }).click();
-  await expect(form.getByRole('alert')).toContainText('The branch name is invalid'); await expect(form.getByRole('alert')).not.toContainText('Command failed');
+  await expect(form.getByRole('alert')).not.toContainText('Command failed');
   await expect(form.getByRole('alert')).toHaveText(rules);
   for (const name of ['bad~name', 'bad^name', 'bad:name', 'bad?name', 'bad*name', 'bad[name', 'bad\\name', 'bad@{name', 'bad//name', '.hidden', 'name.lock', '-name', 'HEAD', 'bad.']) {
     await expect(action({ action: 'create', ref: 'refs/heads/main', name })).rejects.toThrow(rules);
   }
-  await expect(action({ action: 'create', hash: initial, name: 'Merge 1' })).rejects.toThrow(/cannot contain spaces/);
+  await expect(action({ action: 'create', hash: initial, name: 'Merge 1' })).rejects.toThrow(rules);
   git('update-ref', 'refs/remotes/origin/main', initial);
-  await expect(action({ action: 'switch', ref: 'refs/remotes/origin/main', name: 'Merge 1' })).rejects.toThrow(/cannot contain spaces/);
+  await expect(action({ action: 'switch', ref: 'refs/remotes/origin/main', name: 'Merge 1' })).rejects.toThrow(rules);
   await form.getByLabel('Branch name', { exact: true }).fill('merge-1'); await form.getByRole('button', { name: 'Create Branch', exact: true }).click();
   await expect(form).toHaveCount(0); expect(git('branch', '--show-current')).toBe('merge-1');
 });

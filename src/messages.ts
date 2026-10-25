@@ -149,6 +149,8 @@ export const Message = Object.freeze({
   "repository.operation.inProgress": "A repository operation is already in progress.",
   "repository.sessionInvalid": "Invalid repository session.",
   "repository.worktreeUnsupported": "Worktrees and submodule working folders are not supported.",
+  "session.save.busy": "GitForge could not save the open repository tabs because its settings database is busy. Close any other GitForge instance or database editor and try again.",
+  "session.save.failed": "Could not save the open repository tabs. Please try again.",
   "stash.apply.failed": "Git could not apply the stash. The previous working changes were restored and the stash was retained.",
   "stash.apply.restoreFailed": "Stash application failed and the original changes could not be restored automatically. The stash and safety backup {0} have been retained.",
   "stash.filesChanged": "The selected files changed. Select the files again.",

@@ -1,6 +1,21 @@
 const { test, expect } = require('@playwright/test');
 const { launchElectron } = require('./launch.cjs');
 const path = require('node:path');
+const { spawn } = require('node:child_process');
+const { once } = require('node:events');
+
+test('launching GitForge twice with the same data directory keeps the existing workspace', async () => {
+  const app = await launchElectron(); let second;
+  try {
+    const page = await app.firstWindow(); await page.getByRole('button', { name: 'New Tab', exact: true }).click(); await expect(page.getByRole('tab')).toHaveCount(2);
+    await app.evaluate(({ app }) => { globalThis.duplicateLaunches = 0; app.on('second-instance', () => globalThis.duplicateLaunches++); });
+    const executable = await app.evaluate(() => process.execPath);
+    second = spawn(executable, [path.join(__dirname, '..'), `--user-data-dir=${test.info().outputPath('application-data')}`], { windowsHide: true, stdio: 'ignore' });
+    const [code] = await once(second, 'exit'); expect(code).toBe(0);
+    await expect.poll(() => app.evaluate(() => globalThis.duplicateLaunches)).toBe(1);
+    expect(app.windows()).toHaveLength(1); await expect(page.getByRole('tab')).toHaveCount(2); await expect(page.getByRole('alert')).toHaveCount(0);
+  } finally { if (second?.exitCode === null) second.kill(); await app.close(); }
+});
 
 test('tabs and preferences preserve the active workspace', async () => {
   const app = await launchElectron();

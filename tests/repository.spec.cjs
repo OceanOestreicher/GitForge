@@ -13,6 +13,30 @@ async function choose(app, folder) {
   await app.evaluate(({ dialog }, folder) => { dialog.showOpenDialog = async () => folder ? { canceled: false, filePaths: [folder] } : { canceled: true, filePaths: [] }; }, folder);
 }
 
+test('branch deletion, checkout and commits do not rewrite the tab session or fail under a database writer lock', async () => {
+  await fs.writeFile(path.join(root, 'tracked.txt'), 'initial\n'); git('add', '.'); git('commit', '-m', 'Initial'); git('branch', 'delete-me'); git('switch', '-c', 'work');
+  const app = await launchElectron(); let writer;
+  try {
+    const page = await app.firstWindow();
+    await choose(app, root); await page.getByRole('button', { name: 'Open', exact: true }).click(); await expect(page.locator('.repository')).toBeVisible();
+    const { DatabaseSync } = require('node:sqlite'); writer = new DatabaseSync(path.join(test.info().outputPath('application-data'), 'gitforge.sqlite'));
+    await expect.poll(() => writer.prepare('SELECT path FROM open_repositories').all().map(row => row.path)).toEqual([root]);
+    writer.exec('BEGIN IMMEDIATE');
+    await page.evaluate(async root => {
+      await window.gitforge.branchAction(root, { action: 'delete-branch', ref: 'refs/heads/delete-me' });
+      await window.gitforge.branchAction(root, { action: 'switch', ref: 'refs/heads/main' });
+    }, root);
+    await fs.writeFile(path.join(root, 'tracked.txt'), 'committed change\n');
+    await expect(page.getByRole('region', { name: 'Unstaged files', exact: true })).toContainText('tracked.txt');
+    await page.getByRole('button', { name: 'Stage All', exact: true }).click();
+    await page.getByLabel('Commit title', { exact: true }).fill('Commit while session database is busy');
+    await page.getByRole('button', { name: 'Commit', exact: true }).click();
+    await expect(page.locator('.history')).toContainText('Commit while session database is busy'); await expect(page.getByRole('alert')).toHaveCount(0);
+    expect(git('branch', '--show-current')).toBe('main'); expect(git('branch', '--list', 'delete-me')).toBe(''); expect(git('status', '--porcelain')).toBe('');
+    writer.exec('ROLLBACK'); expect(writer.prepare('SELECT path FROM open_repositories').all().map(row => row.path)).toEqual([root]);
+  } finally { writer?.close(); await app.close(); }
+});
+
 test('scrolling updates file hover beneath a stationary pointer', async () => {
   await Promise.all(Array.from({ length: 80 }, (_, i) => fs.writeFile(path.join(root, `file-${String(i).padStart(3, '0')}.txt`), 'content\n')));
   const app = await launchElectron();

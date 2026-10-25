@@ -1,11 +1,9 @@
 const { Message } = require('../dist-electron/messages.cjs');
-const { DatabaseSync } = require('node:sqlite');
 const { randomUUID } = require('node:crypto');
-const path = require('node:path');
+const { openDatabase } = require('./database.cjs');
 
-function createProfileStore(directory, safeStorage, verify) {
-  const db = new DatabaseSync(path.join(directory, 'gitforge.sqlite'));
-  db.exec('PRAGMA busy_timeout=5000; CREATE TABLE IF NOT EXISTS profiles (id TEXT PRIMARY KEY, name TEXT NOT NULL, username TEXT NOT NULL, email TEXT NOT NULL, pat BLOB NOT NULL, active INTEGER NOT NULL DEFAULT 0); CREATE UNIQUE INDEX IF NOT EXISTS one_active_profile ON profiles(active) WHERE active=1');
+function createProfileStore(directory, safeStorage, verify, db = openDatabase(directory)) {
+  db.exec('CREATE TABLE IF NOT EXISTS profiles (id TEXT PRIMARY KEY, name TEXT NOT NULL, username TEXT NOT NULL, email TEXT NOT NULL, pat BLOB NOT NULL, active INTEGER NOT NULL DEFAULT 0); CREATE UNIQUE INDEX IF NOT EXISTS one_active_profile ON profiles(active) WHERE active=1');
   const columns = db.prepare('PRAGMA table_info(profiles)').all().map(column => column.name);
   if (!columns.includes('pat_expires_at')) db.exec('ALTER TABLE profiles ADD COLUMN pat_expires_at TEXT');
   if (!columns.includes('pat_invalid')) db.exec('ALTER TABLE profiles ADD COLUMN pat_invalid INTEGER NOT NULL DEFAULT 0');
@@ -29,14 +27,15 @@ function createProfileStore(directory, safeStorage, verify) {
   return {
     list,
     async refreshActive() {
-      const profile = db.prepare('SELECT id,username,pat FROM profiles WHERE active=1').get();
+      const profile = db.prepare('SELECT id,username,pat,pat_expires_at,pat_invalid FROM profiles WHERE active=1').get();
       if (!profile) return list();
       try {
         const pat = safeStorage.decryptString(Buffer.from(profile.pat));
         const status = await verify(profile.username, pat);
-        db.prepare('UPDATE profiles SET pat_expires_at=?,pat_invalid=0 WHERE id=? AND pat=? AND username=?').run(status?.expiresAt ?? null, profile.id, profile.pat, profile.username);
+        const expiresAt = status?.expiresAt ?? null;
+        if (profile.pat_expires_at !== expiresAt || profile.pat_invalid) db.prepare('UPDATE profiles SET pat_expires_at=?,pat_invalid=0 WHERE id=? AND pat=? AND username=?').run(expiresAt, profile.id, profile.pat, profile.username);
       } catch (error) {
-        if (error.code === 'PAT_INVALID') db.prepare('UPDATE profiles SET pat_invalid=1 WHERE id=? AND pat=? AND username=?').run(profile.id, profile.pat, profile.username);
+        if (error.code === 'PAT_INVALID' && !profile.pat_invalid) db.prepare('UPDATE profiles SET pat_invalid=1 WHERE id=? AND pat=? AND username=?').run(profile.id, profile.pat, profile.username);
         // Offline, rate-limit and server failures do not imply token expiration.
       }
       return list();

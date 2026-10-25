@@ -129,11 +129,13 @@ function App() {
     void restore().catch(() => { if (alive) setReady(false); });
     return () => { alive = false; };
   }, []);
+  const repositoryTabs = tabs.filter(id => repositories[id]);
+  const repositorySession = JSON.stringify({ paths: repositoryTabs.map(id => repositories[id].path), activeIndex: active === null ? -1 : repositoryTabs.indexOf(active) });
   useEffect(() => {
     if (!sessionReady) return;
-    const repositoryTabs = tabs.filter(id => repositories[id]);
-    void window.gitforge.saveSession(repositoryTabs.map(id => repositories[id].path), active === null ? -1 : repositoryTabs.indexOf(active)).catch(error => setOpenError(String(error)));
-  }, [sessionReady, tabs, repositories, active]);
+    const { paths, activeIndex } = JSON.parse(repositorySession);
+    void window.gitforge.saveSession(paths, activeIndex).catch(error => setOpenError(error instanceof Error ? error.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '') : Message['session.save.failed']));
+  }, [sessionReady, repositorySession]);
   useEffect(() => window.gitforge.onMenuAction(action => {
     if (ready !== true || profileRequired) return;
     if (cloneTarget) return;

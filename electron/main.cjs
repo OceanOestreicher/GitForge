@@ -12,6 +12,7 @@ const opened = new Set();
 const { execFile } = require('node:child_process');
 const path = require('node:path');
 const { createSessionStore } = require('./session.cjs');
+const { openDatabase } = require('./database.cjs');
 
 let window;
 let gitAvailable = false;
@@ -21,11 +22,26 @@ function checkGit() {
   return new Promise(resolve => execFile('git', ['--version'], { windowsHide: true, timeout: 5000 }, error => resolve(!error)));
 }
 
-app.whenReady().then(async () => {
+const customDirectory = app.commandLine.getSwitchValue('user-data-dir');
+if (customDirectory) {
+  require('node:fs').mkdirSync(customDirectory, { recursive: true });
+  app.setPath('userData', path.resolve(customDirectory));
+}
+const primaryInstance = app.requestSingleInstanceLock();
+if (!primaryInstance) app.quit();
+app.on('second-instance', () => {
+  if (!window || window.isDestroyed()) return;
+  if (window.isMinimized()) window.restore();
+  window.show(); window.focus();
+});
+
+if (primaryInstance) app.whenReady().then(async () => {
   app.setAppUserModelId('com.gitforge.desktop');
   const dataDirectory = app.commandLine.getSwitchValue('user-data-dir') || app.getPath('userData');
-  const session = createSessionStore(dataDirectory);
-  const profiles = createProfileStore(dataDirectory, safeStorage, (username, pat) => verifyGitHub(username, pat, (...args) => net.fetch(...args)));
+  const database = openDatabase(dataDirectory);
+  const session = createSessionStore(dataDirectory, database);
+  const profiles = createProfileStore(dataDirectory, safeStorage, (username, pat) => verifyGitHub(username, pat, (...args) => net.fetch(...args)), database);
+  app.on('will-quit', () => database.close());
   const activeProfile = () => { const profile = profiles.list().find(profile => profile.active); if (!profile) throw new Error(Message["profile.activeRequired"]); return profile; };
   const operations = new Set();
   const operationVersions = new Map();
@@ -97,8 +113,8 @@ app.whenReady().then(async () => {
   ipcMain.handle('restore-session', () => ({ repositories: restored, activeIndex: restoredActive }));
   ipcMain.handle('save-session', (_event, paths, activeIndex) => {
     if (!gitAvailable || !Array.isArray(paths) || !paths.every(root => opened.has(root)) || !Number.isInteger(activeIndex)) throw new Error(Message["repository.sessionInvalid"]);
-    session.save(paths, activeIndex);
     savedRoots = [...new Set(paths)];
+    session.save(paths, activeIndex);
   });
   ipcMain.handle('open-repository', async () => {
     requireProfile();

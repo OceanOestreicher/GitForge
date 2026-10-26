@@ -47,6 +47,7 @@ test('resolve multiple hunks and files with local/incoming/both, resume after re
   await open(); await page.locator('.sidebar-group').first().locator('.branch-row').filter({ hasText: /^feature/ }).click({ button: 'right' });
   await page.getByRole('menuitem', { name: 'Merge into current branch', exact: true }).click();
   await expect(dialog()).toContainText('File 1 of 2'); await expect(dialog().getByRole('button', { name: 'Next File' })).toBeDisabled();
+  expect((await read('.git/MERGE_MSG')).split('\n')[0]).toBe('Merge branch feature into main');
   await expect(page.getByRole('region', { name: 'Current branch code', exact: true })).toContainText('local first');
   await expect(page.getByRole('region', { name: 'Incoming code', exact: true })).toContainText('incoming first');
   const localCode = page.getByRole('region', { name: 'Current branch code', exact: true });

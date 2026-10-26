@@ -1,5 +1,6 @@
 /** User-facing error and warning messages shared by React and Electron. */
 export const Message = Object.freeze({
+  "merge.commitMessage": "Merge branch {0} into {1}",
   'conflict.abortTitle': 'Abort Merge?',
   'conflict.abortConfirmation': 'Abort this merge and discard your merge resolution changes? The branch will return to its state before the merge.',
 

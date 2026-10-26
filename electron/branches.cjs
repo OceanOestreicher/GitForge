@@ -244,7 +244,9 @@ async function merge(root, input, profile) {
   if (ref === `refs/heads/${branch}`) throw new Error(Message["merge.otherBranchRequired"]);
   if (dirty(await snapshot(root))) throw new Error(Message["merge.dirty"]);
   const originalHead = await head(root);
-  try { await git(root, [...identity(profile), '-c', 'merge.conflictStyle=merge', 'merge', '--ff', '--no-edit', ref]); }
+  const sourceName = ref.startsWith('refs/heads/') ? ref.slice('refs/heads/'.length) : ref.slice('refs/remotes/'.length).split('/').slice(1).join('/');
+  const mergeMessage = addData(Message['merge.commitMessage'], sourceName, branch);
+  try { await git(root, [...identity(profile), '-c', 'merge.conflictStyle=merge', 'merge', '--ff', '--no-edit', '-m', mergeMessage, ref]); }
   catch {
     if (await git(root, ['rev-parse', '-q', '--verify', 'MERGE_HEAD']).catch(() => '')) {
       if ((await git(root, ['ls-files', '-u'])).trim()) {

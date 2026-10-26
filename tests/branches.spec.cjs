@@ -259,7 +259,7 @@ test('branch merges fast-forward, create divergent merge commits, and abort conf
   await write('main.txt', 'main\n'); git('add', '.'); git('commit', '-m', 'Main');
   await action({ action: 'switch', ref: 'refs/heads/feature' }); await write('a.txt', 'feature\n'); git('add', '.'); git('commit', '-m', 'Feature again');
   await action({ action: 'switch', ref: 'refs/heads/main' }); await action({ action: 'merge', ref: 'refs/heads/feature' });
-  expect(git('show', '-s', '--format=%P').split(' ')).toHaveLength(2); expect(git('show', '-s', '--format=%an')).toBe('fixture');
+  expect(git('show', '-s', '--format=%P').split(' ')).toHaveLength(2); expect(git('show', '-s', '--format=%an')).toBe('fixture'); expect(git('show', '-s', '--format=%s')).toBe('Merge branch feature into main');
   await write('a.txt', 'main conflict\n'); git('add', '.'); git('commit', '-m', 'Main conflict'); const before = git('rev-parse', 'HEAD');
   await action({ action: 'switch', ref: 'refs/heads/feature' }); await write('a.txt', 'other conflict\n'); git('add', '.'); git('commit', '-m', 'Feature conflict');
   await action({ action: 'switch', ref: 'refs/heads/main' }); await action({ action: 'merge', ref: 'refs/heads/feature' });
@@ -354,4 +354,18 @@ test('branch progress follows checkout and merge destinations and conflicts repl
   await resolver.getByLabel('Select all local changes', { exact: true }).check();
   await resolver.getByRole('button', { name: 'Resolve', exact: true }).click();
   await expect(resolver).toHaveCount(0); await expect(page.locator('.history')).toBeVisible(); await expect(page.locator('.working-changes')).toBeVisible();
+});
+
+
+test('friendly merge messages use branch names for local and remote sources', async () => {
+  git('branch', 'merge-2'); await write('main.txt', 'main work\n'); git('add', '.'); git('commit', '-m', 'Main work');
+  const source = git('rev-parse', 'HEAD');
+  await action({ action: 'switch', ref: 'refs/heads/merge-2' }); await write('merge.txt', 'merge work\n'); git('add', '.'); git('commit', '-m', 'Merge work');
+  await action({ action: 'merge', ref: 'refs/heads/main' });
+  expect(git('show', '-s', '--format=%s')).toBe('Merge branch main into merge-2');
+  expect(git('show', '-s', '--format=%P').split(' ')).toHaveLength(2);
+  git('branch', 'remote-target', initial); git('update-ref', 'refs/remotes/origin/topic/nested', source);
+  await action({ action: 'switch', ref: 'refs/heads/remote-target' }); await write('other.txt', 'other work\n'); git('add', '.'); git('commit', '-m', 'Other work');
+  await action({ action: 'merge', ref: 'refs/remotes/origin/topic/nested' });
+  expect(git('show', '-s', '--format=%s')).toBe('Merge branch topic/nested into remote-target');
 });

@@ -369,3 +369,43 @@ test('friendly merge messages use branch names for local and remote sources', as
   await action({ action: 'merge', ref: 'refs/remotes/origin/topic/nested' });
   expect(git('show', '-s', '--format=%s')).toBe('Merge branch topic/nested into remote-target');
 });
+
+
+test('single-click branch selection supports Delete confirmation while double-click and menu checkout remain separate', async () => {
+  git('remote', 'add', 'origin', root);
+  git('update-ref', 'refs/remotes/origin/feature', initial);
+  const rows = page.locator('.sidebar-group').first().locator('.branch-row');
+  const feature = rows.filter({ hasText: /^feature$/ }), main = rows.filter({ hasText: /^main$/ });
+  await expect(feature).not.toHaveClass(/local-only-branch/);
+  await feature.click(); await expect(feature).toHaveAttribute('aria-pressed', 'true'); expect(git('branch', '--show-current')).toBe('main');
+  await main.click(); await expect(main).toHaveAttribute('aria-pressed', 'true'); await expect(feature).toHaveAttribute('aria-pressed', 'false');
+  await main.press('Delete'); await expect(page.getByRole('dialog')).toHaveCount(0); expect(git('branch', '--show-current')).toBe('main');
+  await feature.click(); await feature.press('Delete');
+  const deletion = page.getByRole('dialog', { name: 'Delete Branch', exact: true });
+  await expect(deletion.getByLabel('Also delete remote branch origin/feature')).toBeVisible();
+  await deletion.getByRole('button', { name: 'Cancel', exact: true }).click(); await expect(feature).toHaveAttribute('aria-pressed', 'true');
+  const title = page.getByLabel('Commit title', { exact: true }); await title.fill('draft'); await title.press('Delete'); expect(git('branch', '--list', 'feature')).toBeTruthy();
+  await feature.dblclick(); await expect(feature).toHaveClass(/current-branch/); expect(git('branch', '--show-current')).toBe('feature');
+  await feature.click({ button: 'right' }); await expect(page.getByRole('menuitem', { name: 'Checkout Branch', exact: true })).toBeDisabled();
+  await page.keyboard.press('Escape');
+  await main.click({ button: 'right' }); await page.getByRole('menuitem', { name: 'Checkout Branch', exact: true }).click();
+  await expect(main).toHaveClass(/current-branch/); expect(git('branch', '--show-current')).toBe('main');
+  await feature.click(); await feature.press('Delete'); await deletion.getByRole('button', { name: 'Confirm', exact: true }).click();
+  await expect(feature).toHaveCount(0); expect(git('rev-parse', 'refs/remotes/origin/feature')).toBe(initial);
+});
+
+test('remote branch selection supports menu checkout and Delete without deleting local branches', async () => {
+  const remote = test.info().outputPath('selected-remote.git'); git('init', '--bare', remote); git('remote', 'add', 'origin', remote); git('push', 'origin', 'main', 'feature');
+  await page.locator('summary').filter({ hasText: /^Remote branches$/ }).click();
+  const feature = page.locator('.sidebar-group').nth(1).locator('.branch-row').filter({ hasText: /^feature$/ });
+  await expect(feature).toBeVisible(); await feature.click(); await expect(feature).toHaveAttribute('aria-pressed', 'true'); expect(git('branch', '--show-current')).toBe('main');
+  await feature.press('Delete'); const deletion = page.getByRole('dialog', { name: 'Delete Remote Branch', exact: true });
+  await expect(deletion).toContainText('Local branches and their files will be kept'); await deletion.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await feature.click({ button: 'right' }); await page.getByRole('menuitem', { name: 'Checkout Branch', exact: true }).click();
+  const checkout = page.getByRole('dialog', { name: 'Create Local Branch', exact: true });
+  await checkout.getByLabel('Branch name', { exact: true }).fill('from-menu'); await checkout.getByRole('button', { name: 'Confirm', exact: true }).click();
+  await expect(checkout).toHaveCount(0); expect(git('branch', '--show-current')).toBe('from-menu');
+  await feature.click(); await feature.press('Delete'); await deletion.getByRole('button', { name: 'Confirm', exact: true }).click();
+  await expect(feature).toHaveCount(0); expect(git('branch', '--show-current')).toBe('from-menu');
+  expect(git('rev-parse', 'feature')).toBe(initial); expect(git('rev-parse', 'from-menu')).toBe(initial); expect(git('ls-remote', '--heads', 'origin', 'feature')).toBe('');
+});

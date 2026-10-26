@@ -2,7 +2,33 @@
 
 A Windows desktop Git client built with Electron, React, and TypeScript.
 
-## Requirements
+## Run the Windows executable
+
+Double-click `release/GitForge.exe` to start GitForge.
+This portable executable includes the application runtime; Node.js, npm, and a
+terminal are not required. Git must be installed and available on PATH.
+Profiles and the saved workspace remain in the Windows application-data folder.
+
+## Build a Windows executable
+
+With Node.js, npm, and Git installed:
+
+```powershell
+npm.cmd install
+npm.cmd run dist:win
+```
+
+The build creates `release/GitForge.exe` and an unpacked
+application in `release/win-unpacked/`. Double-click the portable executable to
+run it, or move that executable to another folder. Keep every file together
+if using the unpacked application. Build outputs are ignored by Git.
+The Preferences sidebar displays the version from `package.json`.
+Packaging uses [electron-builder](https://www.electron.build/v26/docs/).
+
+After building, `npm.cmd run test:packaged` checks the packaged runtime using
+an isolated test profile and repository.
+
+## Development requirements
 
 - Git installed and available on PATH
 - Node.js and npm

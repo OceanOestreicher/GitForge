@@ -6,7 +6,7 @@ async function launchElectron(options = {}) {
   const { profileSetup = true, ...launchOptions } = options;
   const profile = test.info().outputPath('application-data');
   fs.mkdirSync(profile, { recursive: true });
-  const app = await electron.launch({ ...launchOptions, args: [path.join(__dirname, '..'), `--user-data-dir=${profile}`] });
+  const app = await electron.launch({ ...launchOptions, args: [...(launchOptions.executablePath ? [] : [path.join(__dirname, '..')]), `--user-data-dir=${profile}`] });
   // Exercise real validation logic with deterministic GitHub responses; no test
   // sends fixture credentials over the network.
   await app.evaluate(({ net }) => {

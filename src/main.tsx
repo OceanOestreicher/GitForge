@@ -1,3 +1,4 @@
+import { version } from '../package.json';
 import { Message } from './messages';
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -183,6 +184,7 @@ function App() {
     {preferences || profileRequired ? <div className="preferences">
       <aside><button className="back" disabled={profileRequired} onClick={() => setPreferences(false)}>← Exit Preferences</button>
         <nav aria-label="Preferences pages"><button aria-current="page" className="selected">Profiles</button></nav>
+        <p className="application-version" aria-label="Application version">Version {version}</p>
       </aside><main className="preference-page"><ProfilesPage profiles={profiles} updated={values => { setProfiles(values); setPreferences(true); }}/></main>
     </div> : active !== null && repositories[active] ? <RepositoryView key={active} initial={repositories[active]} updated={repo => setRepositories(previous => ({ ...previous, [active]: repo }))}/> : active !== null ? <main className="welcome"><h1>Repositories</h1><div className="actions">
       <button disabled={opening} onClick={() => void openRepository(false)}><span aria-hidden="true">▰</span> Open</button>

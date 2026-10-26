@@ -37,3 +37,5 @@
 .branch-icon{vertical-align:middle;flex-shrink:0;margin-right:6px}.branch-spinner{display:inline-block;width:13px;height:13px;margin-left:7px;vertical-align:middle;border:2px solid #78bed844;border-top-color:#78bed8;border-radius:50%;animation:branch-spin .7s linear infinite}@keyframes branch-spin{to{transform:rotate(360deg)}}.merge-workspace{grid-column:2 / -1;grid-row:1;display:flex;flex-direction:column;min-width:0;min-height:0;width:auto;max-height:none;border:0;border-left:1px solid #414753;border-radius:0;overflow:hidden}.merge-workspace>header,.merge-workspace>footer{flex-shrink:0}.merge-workspace .merge-file-sources,.merge-workspace .merge-output-section{min-height:0}
 
 .branch-row[aria-pressed="true"],.branch-row[aria-pressed="true"]:hover{background:#374965;color:#f5f7fc}.branch-row:focus-visible{outline:2px solid #73bce4;outline-offset:-2px}
+
+.preferences>aside{display:flex;flex-direction:column;min-height:0}.application-version{margin:auto 0 0;padding:16px;color:#989fac;font-size:12px;flex-shrink:0}

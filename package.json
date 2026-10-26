@@ -1,6 +1,6 @@
 {
   "name": "gitforge",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "description": "A Windows desktop Git client",
   "main": "electron/main.cjs",
@@ -13,6 +13,7 @@
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
     "electron": "^44.0.0",
+    "electron-builder": "^26.18.0",
     "typescript": "^5.9.0",
     "vite": "^8.0.0"
   },
@@ -22,6 +23,18 @@
     "start": "npm run build && electron .",
     "test": "playwright test",
     "build:messages": "node scripts/build-messages.cjs",
-    "pretest": "npm run build:messages"
+    "pretest": "npm run build:messages",
+    "dist:win": "npm run build && electron-builder --win portable --x64 --publish never",
+    "test:packaged": "node scripts/test-packaged.cjs"
+  },
+  "build": {
+    "appId": "com.gitforge.desktop",
+    "productName": "GitForge",
+    "directories": { "output": "release" },
+    "files": ["electron/**/*.cjs", "dist/**/*", "dist-electron/messages.cjs", "assets/gitforge.ico"],
+    "electronDist": "node_modules/electron/dist",
+    "asar": true,
+    "artifactName": "GitForge.${ext}",
+    "win": { "icon": "assets/gitforge.ico", "target": [{ "target": "portable", "arch": ["x64"] }] }
   }
 }

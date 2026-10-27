@@ -101,9 +101,10 @@ history page. Click a parent hash in Commit information to select and scroll to
 that parent. The sidebar Filter applies on Enter and matches branch and stash
 names; empty sections hide until the filter is cleared.
 Clean checkouts retain the same graph paths and colors, with the newest commit
-defining the base blue path. Actual working changes temporarily make the
-checked-out branch the base path. Diverging paths join only at their shared
-ancestor's node.
+defining the base blue path. WIP appears only when uncommitted files exist.
+Actual working changes temporarily swap the checked-out path's color with the
+base blue path, preserving other branch colors. Diverging paths join only at
+their shared ancestor's node.
 
 ## Error messages
 

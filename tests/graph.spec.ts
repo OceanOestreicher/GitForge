@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { buildCommitGraph, buildHistoryGraph, graphColors, withWorkingChanges } from '../src/commit-graph';
+import { buildCommitGraph, buildHistoryGraph, graphColors } from '../src/commit-graph';
 
 test('graph connects a merge to both branch histories and rejoins their shared ancestor', () => {
   const commits = [{ hash: 'merge', parents: ['main', 'feature'] }, { hash: 'feature', parents: ['base'] }, { hash: 'main', parents: ['base'] }, { hash: 'base', parents: [] }];
@@ -26,8 +26,7 @@ test('graph maintains continuation colors, rotates fork colors, and retains path
 });
 
 test('graph supports octopus merges, unrelated roots, and working changes attached to an older HEAD', () => {
-  const committed = buildCommitGraph([{ hash: 'merge', parents: ['a', 'b', 'c'] }, { hash: 'a', parents: [] }, { hash: 'b', parents: [] }, { hash: 'c', parents: [] }, { hash: 'head', parents: [] }]);
-  const graph = withWorkingChanges(committed, 'head');
+  const graph = buildHistoryGraph([{ hash: 'merge', parents: ['a', 'b', 'c'] }, { hash: 'a', parents: [] }, { hash: 'b', parents: [] }, { hash: 'c', parents: [] }, { hash: 'head', parents: [] }], 'head', true);
   expect(graph.rows[1].edges.filter(edge => edge.parent)).toHaveLength(3);
   expect(new Set(graph.rows.slice(2, 5).map(row => row.color)).size).toBe(3);
   expect(graph.rows[5].color).toBe(graph.rows[0].color);
@@ -51,8 +50,7 @@ test('checkout never recolors or reroutes the committed main, development and me
   expect(graph.rows[0].color).toBe(graphColors[0]);
   expect(graph.rows[1].color).not.toBe(graphColors[0]);
   for (const head of ['main', 'development', base, null]) {
-    const decorated = withWorkingChanges(graph, head);
-    expect(decorated.rows.slice(1).map(row => ({ ...row, edges: row.edges.filter(edge => !edge.dashed) }))).toEqual(graph.rows);
+    expect(buildHistoryGraph(commits, head, false)).toEqual(graph);
   }
   const ancestor = graph.rows.find(row => row.hash === base)!;
   expect(ancestor.edges.filter(edge => edge.end === 'node')).toHaveLength(4);
@@ -65,29 +63,46 @@ test('checkout never recolors or reroutes the committed main, development and me
   }
 });
 
-test('WIP follows HEAD beyond a history page without changing colors when the page is extended', () => {
-  const first = buildCommitGraph([{ hash: 'newest', parents: ['base'] }]);
-  const pending = withWorkingChanges(first, 'old');
-  expect(pending.rows[1].color).toBe(graphColors[0]);
-  const complete = buildCommitGraph([{ hash: 'newest', parents: ['base'] }, { hash: 'old', parents: ['base'] }, { hash: 'base', parents: [] }]);
-  expect(complete.rows[0]).toEqual(first.rows[0]);
-  const resolved = withWorkingChanges(complete, 'old');
-  expect(resolved.rows[0].color).toBe(complete.rows[1].color);
-  expect(resolved.rows[0].color).not.toBe(graphColors[0]);
-  expect(withWorkingChanges(buildCommitGraph([]), null).rows[0].edges).toEqual([]);
+test('clean histories have no WIP, including old HEAD, missing HEAD and empty repositories', () => {
+  const commits = [{ hash: 'newest', parents: ['base'] }, { hash: 'old', parents: ['base'] }, { hash: 'base', parents: [] }];
+  for (const head of ['newest', 'old', 'not-loaded', null]) {
+    const graph = buildHistoryGraph(commits, head, false);
+    expect(graph).toEqual(buildCommitGraph(commits));
+    expect(graph.rows.some(row => row.hash === 'gitforge-wip')).toBe(false);
+    expect(graph.rows.flatMap(row => row.edges).some(edge => edge.dashed)).toBe(false);
+  }
+  expect(buildHistoryGraph([], null, false)).toEqual({ rows: [], lanes: 1 });
 });
 
 test('real uncommitted work takes the base color and still rejoins only at the common ancestor', () => {
   const commits = [{ hash: 'main', parents: ['main-older'] }, { hash: 'development', parents: ['base'] }, { hash: 'main-older', parents: ['base'] }, { hash: 'base', parents: [] }];
   const clean = buildHistoryGraph(commits, 'development', false);
   const dirty = buildHistoryGraph(commits, 'development', true);
-  expect(clean.rows[1].color).toBe(graphColors[0]);
-  expect(clean.rows[2].color).not.toBe(graphColors[0]);
+  expect(clean.rows[0].color).toBe(graphColors[0]);
+  expect(clean.rows[1].color).not.toBe(graphColors[0]);
   expect(dirty.rows[0].color).toBe(graphColors[0]);
   expect(dirty.rows[2].color).toBe(graphColors[0]);
-  expect(dirty.rows[1].color).not.toBe(graphColors[0]);
+  expect(dirty.rows[1].color).toBe(clean.rows[1].color);
   expect(dirty.rows[2].edges.find(edge => edge.parent === 'base')?.to).toBe(dirty.rows[2].lane);
   expect(dirty.rows.at(-1)!.edges.filter(edge => edge.end === 'node')).toHaveLength(2);
   expect(buildHistoryGraph(commits, 'development', false)).toEqual(clean);
   expect(buildHistoryGraph([], null, true).rows[0].color).toBe(graphColors[0]);
+});
+
+
+test('WIP on a third path swaps only that path and the base, retaining other fork colors and blue shared ancestry', () => {
+  const commits = [
+    { hash: 'main', parents: ['main-older'] }, { hash: 'development', parents: ['base'] },
+    { hash: 'third', parents: ['third-older', 'side'] }, { hash: 'third-older', parents: ['base'] },
+    { hash: 'side', parents: ['base'] }, { hash: 'main-older', parents: ['base'] }, { hash: 'base', parents: [] }
+  ];
+  const clean = buildHistoryGraph(commits, 'third', false), dirty = buildHistoryGraph(commits, 'third', true);
+  const before = new Map(clean.rows.map(row => [row.hash, row]));
+  const after = new Map(dirty.rows.map(row => [row.hash, row]));
+  expect(after.get('third')!.color).toBe(graphColors[0]);
+  expect(after.get('main')!.color).toBe(before.get('third')!.color);
+  expect(after.get('main-older')!.color).toBe(before.get('third')!.color);
+  for (const hash of ['development', 'side']) expect(after.get(hash)!.color).toBe(before.get(hash)!.color);
+  expect(after.get('base')!.color).toBe(graphColors[0]);
+  expect(buildHistoryGraph(commits, 'third', false)).toEqual(clean);
 });

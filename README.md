@@ -100,6 +100,10 @@ and highlighted checked-out tip, and navigation to commits beyond the first
 history page. Click a parent hash in Commit information to select and scroll to
 that parent. The sidebar Filter applies on Enter and matches branch and stash
 names; empty sections hide until the filter is cleared.
+Clean checkouts retain the same graph paths and colors, with the newest commit
+defining the base blue path. Actual working changes temporarily make the
+checked-out branch the base path. Diverging paths join only at their shared
+ancestor's node.
 
 ## Error messages
 

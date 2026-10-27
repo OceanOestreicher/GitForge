@@ -1,4 +1,4 @@
-import { buildCommitGraph } from './commit-graph';
+import { buildHistoryGraph } from './commit-graph';
 import { GraphCell } from './graph-cell';
 import { AbortMergeDialog } from './abort-merge-dialog';
 import { Message } from './messages';
@@ -89,7 +89,8 @@ export function RepositoryView({ initial, updated }: { initial: Repository; upda
   const localBranches = repo.local.filter(name => name.toLowerCase().includes(query));
   const remoteBranches = repo.remote.filter(name => name.split('/').slice(1).join('/').toLowerCase().includes(query));
   const filteredStashes = repo.stashEntries.filter(stash => stash.message.toLowerCase().includes(query));
-  const graph = useMemo(() => buildCommitGraph([{ hash: 'gitforge-wip', parents: repo.head ? [repo.head] : [] }, ...repo.commits]), [repo.commits, repo.head]);
+  const hasWorkingChanges = Boolean(repo.staged.length || repo.unstaged.length);
+  const graph = useMemo(() => buildHistoryGraph(repo.commits, repo.head, hasWorkingChanges), [repo.commits, repo.head, hasWorkingChanges]);
   const historyElement = useRef<HTMLElement>(null);
   const history = useRef(repo.commits); history.current = repo.commits;
   const remaining = useRef(hasMore); remaining.current = hasMore;

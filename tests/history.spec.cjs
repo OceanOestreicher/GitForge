@@ -78,3 +78,67 @@ test('sidebar filtering applies on Enter, matches displayed names, hides empty s
   await page.getByRole('button', { name: 'Clear filter', exact: true }).click(); await expect(filter).toHaveValue(''); await expect(local.locator('.branch-row')).toHaveCount(3); await expect(remote).toBeVisible(); await expect(stashes.locator('.stash-row')).toHaveCount(2);
   await filter.fill('other'); await filter.press('Enter'); await filter.fill(''); await filter.press('Enter'); await expect(local.locator('.branch-row')).toHaveCount(3); await expect(page.getByRole('button', { name: 'Clear filter', exact: true })).toHaveCount(0);
 });
+
+
+test('checkout keeps branch colors and divergence fixed; only a newer tip takes the base color', async () => {
+  const base = git('rev-parse', 'HEAD'), time = Number(git('show', '-s', '--format=%ct', 'HEAD'));
+  const dated = (message, seconds) => {
+    git('add', '.');
+    execFileSync('git', ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.com', 'commit', '-m', message], {
+      cwd: root, windowsHide: true, stdio: 'pipe', env: { ...process.env, GIT_AUTHOR_DATE: `${time + seconds} +0000`, GIT_COMMITTER_DATE: `${time + seconds} +0000` }
+    }); return git('rev-parse', 'HEAD');
+  };
+  for (const branch of ['Development', 'Test3', 'side']) git('branch', branch, base);
+  git('switch', 'side'); await write('side.txt', 'one\n'); const sideFirst = dated('Change 1', 60);
+  await write('side.txt', 'three\n'); const sideLast = dated('Change 3', 180);
+  git('switch', 'Test3'); await write('test.txt', 'four\n'); const testFirst = dated('Change 4', 240);
+  execFileSync('git', ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.com', 'merge', '--no-ff', 'side', '-m', 'Merge side into Test3'], {
+    cwd: root, windowsHide: true, stdio: 'pipe', env: { ...process.env, GIT_AUTHOR_DATE: `${time + 300} +0000`, GIT_COMMITTER_DATE: `${time + 300} +0000` }
+  }); const merge = git('rev-parse', 'HEAD'); git('branch', '-d', 'side');
+  git('switch', 'Development'); await write('development.txt', 'development\n'); const development = dated('Initial Phase 10', 360);
+  git('switch', 'main'); await write('main.txt', 'main older\n'); const mainFirst = dated('Change 2', 120);
+  await write('main.txt', 'main latest\n'); const main = dated('Test commit 1', 420);
+  await open();
+  const fingerprint = () => page.locator('[data-commit-hash]').evaluateAll(rows => rows.map(row => {
+    const node = row.querySelector('.graph-commit-node');
+    return { hash: row.dataset.commitHash, lane: node.dataset.lane, color: node.dataset.color,
+      paths: [...row.querySelectorAll('.commit-graph path:not([stroke-dasharray])')].map(path => [path.getAttribute('d'), path.getAttribute('stroke'), path.getAttribute('data-parent-hash')]) };
+  }));
+  await expect(row(main)).toHaveClass(/current-commit/);
+  const initial = await fingerprint();
+  expect(initial.map(row => row.hash)).toEqual([main, development, merge, testFirst, sideLast, mainFirst, sideFirst, base]);
+  expect(initial[0].color).toBe('#38bcd4'); expect(initial[1].color).not.toBe(initial[0].color);
+  expect(initial.at(-1).color).toBe(initial[0].color);
+  await page.screenshot({ path: test.info().outputPath('main-checked-out.png') });
+  await page.locator('.sidebar-group').first().locator('.branch-row').filter({ hasText: /^Development$/ }).dblclick();
+  await expect(row(development)).toHaveClass(/current-commit/); expect(await fingerprint()).toEqual(initial);
+  await page.screenshot({ path: test.info().outputPath('development-checked-out.png') });
+  await page.locator('.sidebar-group').first().locator('.branch-row').filter({ hasText: /^main$/ }).dblclick();
+  await expect(row(main)).toHaveClass(/current-commit/); expect(await fingerprint()).toEqual(initial);
+  await page.locator('.sidebar-group').first().locator('.branch-row').filter({ hasText: /^Development$/ }).dblclick();
+  await expect(row(development)).toHaveClass(/current-commit/);
+  await write('development.txt', 'newest development\n'); const newest = dated('Newest development commit', 480);
+  await expect(row(newest)).toHaveClass(/current-commit/); await expect(row(newest).locator('.graph-commit-node')).toHaveAttribute('data-color', '#38bcd4');
+  await expect(row(main).locator('.graph-commit-node')).not.toHaveAttribute('data-color', '#38bcd4');
+});
+
+
+test('unstaged, staged and untracked WIP promote the checked-out branch to blue and clearing restores clean colors', async () => {
+  git('branch', 'Development'); git('switch', 'Development'); await write('development.txt', 'original development\n'); const development = commit('Development path');
+  git('switch', 'main'); await write('main.txt', 'newer main\n'); git('add', '.');
+  const date = `${Math.floor(Date.now() / 1000) + 60} +0000`;
+  execFileSync('git', ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.com', 'commit', '-m', 'Latest main'], { cwd: root, windowsHide: true, stdio: 'pipe', env: { ...process.env, GIT_AUTHOR_DATE: date, GIT_COMMITTER_DATE: date } });
+  const main = git('rev-parse', 'HEAD'); git('switch', 'Development'); await open();
+  const currentNode = row(development).locator('.graph-commit-node'), latestNode = row(main).locator('.graph-commit-node');
+  await expect(latestNode).toHaveAttribute('data-color', '#38bcd4'); const clean = await currentNode.getAttribute('data-color'); expect(clean).not.toBe('#38bcd4');
+  await write('development.txt', 'uncommitted work\n');
+  await expect(currentNode).toHaveAttribute('data-color', '#38bcd4'); await expect(latestNode).not.toHaveAttribute('data-color', '#38bcd4');
+  await expect(page.locator('.graph-wip-node')).toHaveAttribute('data-color', '#38bcd4');
+  await page.screenshot({ path: test.info().outputPath('development-wip.png') });
+  await page.getByRole('button', { name: 'Stage All', exact: true }).click(); await expect(page.getByRole('heading', { name: 'Staged files (1)', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Unstaged files (0)', exact: true })).toBeVisible(); await expect(currentNode).toHaveAttribute('data-color', '#38bcd4');
+  git('restore', '--staged', 'development.txt'); git('restore', 'development.txt');
+  await expect(currentNode).toHaveAttribute('data-color', clean); await expect(latestNode).toHaveAttribute('data-color', '#38bcd4');
+  await write('untracked.txt', 'new file\n'); await expect(currentNode).toHaveAttribute('data-color', '#38bcd4');
+  await fs.unlink(path.join(root, 'untracked.txt')); await expect(currentNode).toHaveAttribute('data-color', clean); await expect(latestNode).toHaveAttribute('data-color', '#38bcd4');
+});

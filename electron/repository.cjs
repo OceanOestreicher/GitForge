@@ -11,7 +11,7 @@ function git(cwd, args, environment = {}) {
 }
 async function commits(root, skip = 0) {
   if (!await git(root, ['rev-parse', '--verify', 'HEAD']).catch(() => '')) return [];
-  const raw = await git(root, ['log', '--branches', '--remotes', 'HEAD', '--topo-order', '--max-count=200', `--skip=${skip}`, '--format=%H%x00%P%x00%an%x00%aI%x00%s%x00%D%x00']);
+  const raw = await git(root, ['log', '--branches', '--remotes', 'HEAD', '--date-order', '--max-count=200', `--skip=${skip}`, '--format=%H%x00%P%x00%an%x00%aI%x00%s%x00%D%x00']);
   const fields = raw.split('\0');
   const result = [];
   for (let i = 0; i + 5 < fields.length; i += 6) result.push({ hash: fields[i].trim(), parents: fields[i + 1].split(' ').filter(Boolean), author: fields[i + 2], date: fields[i + 3], subject: fields[i + 4], refs: fields[i + 5] });

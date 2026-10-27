@@ -409,3 +409,32 @@ test('remote branch selection supports menu checkout and Delete without deleting
   await expect(feature).toHaveCount(0); expect(git('branch', '--show-current')).toBe('from-menu');
   expect(git('rev-parse', 'feature')).toBe(initial); expect(git('rev-parse', 'from-menu')).toBe(initial); expect(git('ls-remote', '--heads', 'origin', 'feature')).toBe('');
 });
+
+
+test('sidebar blank space, headings and filter clear branch or stash selection without affecting checkout or menus', async () => {
+  git('update-ref', 'refs/remotes/origin/feature', initial);
+  await write('a.txt', 'saved selection work\n'); await action({ action: 'stash', name: 'Picked stash', paths: ['a.txt'] });
+  const sidebar = page.locator('.repo-sidebar');
+  const local = sidebar.locator('.sidebar-group').first().locator('.branch-row').filter({ hasText: /^feature$/ });
+  const remote = sidebar.locator('.sidebar-group').nth(1).locator('.branch-row').filter({ hasText: /^feature$/ });
+  const stash = sidebar.locator('.stash-row').filter({ hasText: 'Picked stash' });
+  const blank = async () => { const bounds = await sidebar.boundingBox(); await sidebar.click({ position: { x: bounds.width / 2, y: bounds.height - 8 } }); };
+  const noneSelected = () => expect(sidebar.locator('[aria-pressed="true"]')).toHaveCount(0);
+  await sidebar.locator('summary').filter({ hasText: /^Remote branches$/ }).click();
+  await sidebar.locator('summary').filter({ hasText: /^Stashes$/ }).click();
+  await local.click(); await expect(local).toHaveAttribute('aria-pressed', 'true');
+  await page.getByLabel('Commit title', { exact: true }).click(); await expect(local).toHaveAttribute('aria-pressed', 'true');
+  await blank(); await noneSelected();
+  await local.focus(); await local.press('Delete'); await expect(page.getByRole('dialog')).toHaveCount(0); expect(git('branch', '--list', 'feature')).toBeTruthy();
+  await remote.click(); await expect(remote).toHaveAttribute('aria-pressed', 'true');
+  const filter = sidebar.getByRole('textbox', { name: 'Filter branches and stashes', exact: true });
+  await filter.click(); await noneSelected(); await expect(filter).toBeFocused();
+  await stash.click(); await expect(stash).toHaveAttribute('aria-pressed', 'true');
+  await local.click(); await expect(stash).toHaveAttribute('aria-pressed', 'false'); await expect(local).toHaveAttribute('aria-pressed', 'true');
+  await stash.click(); await sidebar.locator('summary').filter({ hasText: /^Local branches$/ }).click(); await noneSelected();
+  await stash.click({ button: 'right' }); await expect(stash).toHaveAttribute('aria-pressed', 'true');
+  await page.getByRole('menuitem', { name: 'Delete Stash', exact: true }).click();
+  await page.getByRole('dialog', { name: 'Delete Stash', exact: true }).getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(stash).toHaveAttribute('aria-pressed', 'true'); await blank(); await noneSelected();
+  expect(git('stash', 'list')).toContain('Picked stash'); expect(git('branch', '--show-current')).toBe('main');
+});

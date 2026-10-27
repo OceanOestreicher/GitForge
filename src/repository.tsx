@@ -79,7 +79,7 @@ export function RepositoryView({ initial, updated }: { initial: Repository; upda
   const [context, setContext] = useState<{ x: number; y: number; kind: 'commit' | 'branch' | 'stash' | 'files'; target: string; paths?: string[]; canReset?: boolean } | null>(null);
   const [prompt, setPrompt] = useState<BranchPrompt | null>(null);
   const [busy, setBusy] = useState(false);
-  const [selectedBranch, setSelectedBranch] = useState<string | null>(null);
+  const [selectedSidebarItem, setSelectedSidebarItem] = useState<string | null>(null);
   const [pendingBranch, setPendingBranch] = useState<string | null>(null);
   const [picked, setPicked] = useState<{ staged: boolean; paths: string[]; anchor?: string }>({ staged: false, paths: [] });
   const [pushMenu, setPushMenu] = useState(false);
@@ -200,7 +200,7 @@ export function RepositoryView({ initial, updated }: { initial: Repository; upda
   const runBranch = (input: BranchAction) => { void executeBranch(input).catch(error => setError(message(error))); };
   const showMenu = (event: React.MouseEvent, kind: 'commit' | 'branch' | 'stash' | 'files', target: string, paths?: string[]) => {
     event.preventDefault(); if (busy || repo.conflict) return;
-    if (kind === 'branch') { setSelectedBranch(target); (event.currentTarget as HTMLElement).focus(); }
+    if (kind === 'branch' || kind === 'stash') { setSelectedSidebarItem(kind === 'stash' ? `stash:${target}` : target); (event.currentTarget as HTMLElement).focus(); }
     setContext({ kind, target, paths, x: Math.min(event.clientX, window.innerWidth - 250), y: Math.min(event.clientY, window.innerHeight - (kind === 'branch' ? 325 : 170)) });
     if (kind === 'commit') void window.gitforge.canResetCommit(repo.path, target).then(canReset => setContext(previous => previous?.kind === 'commit' && previous.target === target ? { ...previous, canReset } : previous)).catch(() => {});
   };
@@ -218,15 +218,15 @@ export function RepositoryView({ initial, updated }: { initial: Repository; upda
       : { kind: 'delete-remote-branch', input: { action: 'delete-remote-branch', ref } });
   };
   const branchSelection = (ref: string) => ({
-    role: 'button', tabIndex: 0, 'aria-pressed': selectedBranch === ref,
-    onClick: (event: React.MouseEvent<HTMLDivElement>) => { setSelectedBranch(ref); event.currentTarget.focus(); },
+    role: 'button', tabIndex: 0, 'aria-pressed': selectedSidebarItem === ref,
+    onClick: (event: React.MouseEvent<HTMLDivElement>) => { setSelectedSidebarItem(ref); event.currentTarget.focus(); },
     onKeyDown: (event: React.KeyboardEvent<HTMLDivElement>) => {
-      if (event.key === 'Delete') { event.preventDefault(); event.stopPropagation(); if (!event.repeat) deleteBranch(ref); }
+      if (event.key === 'Delete') { event.preventDefault(); event.stopPropagation(); if (!event.repeat && selectedSidebarItem === ref) deleteBranch(ref); }
     }
   });
   useEffect(() => {
-    setSelectedBranch(previous => previous && (previous.startsWith('refs/heads/') ? repo.local.includes(previous.slice(11)) : repo.remote.includes(previous.slice(13))) ? previous : null);
-  }, [repo.local, repo.remote]);
+    setSelectedSidebarItem(previous => previous && (previous.startsWith('stash:') ? repo.stashEntries.some(stash => `stash:${stash.hash}` === previous) : previous.startsWith('refs/heads/') ? repo.local.includes(previous.slice(11)) : repo.remote.includes(previous.slice(13))) ? previous : null);
+  }, [repo.local, repo.remote, repo.stashEntries]);
   const fileMenu = (staged: boolean, file: FileChange, event: React.MouseEvent<HTMLButtonElement>) => {
     const paths = picked.staged === staged && picked.paths.includes(file.path) ? picked.paths : [file.path];
     setPicked({ staged, paths, anchor: file.path });
@@ -262,11 +262,17 @@ export function RepositoryView({ initial, updated }: { initial: Repository; upda
     <header className="repo-actions"><div className="repo-name" title={repo.path}><strong>{repo.name}</strong><span>{repo.branch}</span></div><div className="repo-buttons"><button disabled={busy || Boolean(repo.conflict)} onClick={() => void runRemote('pull')}>Pull</button><div className="push-control"><button disabled={busy || Boolean(repo.conflict) || !repo.canPush} onClick={() => void startPush(false)}>Push</button><button disabled={busy || Boolean(repo.conflict) || !repo.canPush} aria-label="Push options" onClick={() => setPushMenu(value => !value)}>&#9662;</button>{pushMenu && <div className="profile-menu"><button onClick={() => void startPush(true)}>Force Push</button></div>}</div><button disabled={busy || Boolean(repo.conflict) || !repo.local.includes(repo.branch)} onClick={() => setPrompt({ kind: 'create', input: { action: 'create', ref: `refs/heads/${repo.branch}` } })}>Branch</button><button disabled={busy || Boolean(repo.conflict)} onClick={() => void runRemote('fetch')}>Fetch</button></div></header>
     {error && <div className="error" role="alert">{error}<button onClick={() => setError('')}>Dismiss</button></div>}
     <div className="repo-layout">
-      <aside className="repo-sidebar">
+      <aside className="repo-sidebar" onPointerDown={event => {
+        if (!(event.target as Element).closest('.branch-row,.stash-row')) {
+          setSelectedSidebarItem(null);
+          const focused = document.activeElement as HTMLElement | null;
+          if (focused?.closest('.branch-row,.stash-row') && event.currentTarget.contains(focused)) focused.blur();
+        }
+      }}>
         <form className="sidebar-filter" onSubmit={event => { event.preventDefault(); setFilter(filterDraft.trim()); }}><input aria-label="Filter branches and stashes" placeholder="Filter" value={filterDraft} onChange={event => setFilterDraft(event.target.value)}/>{filter && <button type="button" aria-label="Clear filter" onClick={() => { setFilter(''); setFilterDraft(''); }}>&#215;</button>}</form>
         <details className="sidebar-group" hidden={Boolean(filter) && !localBranches.length} open><summary>Local branches</summary><div className="sidebar-items">{localBranches.map(branch => <div className={`${branch === repo.branch ? 'current-branch ' : ''}branch-row${repo.remoteBranches[branch] ? '' : ' local-only-branch'}`} title={repo.remoteBranches[branch] ? undefined : 'Local branch: not published to a remote'} key={branch} {...branchSelection(`refs/heads/${branch}`)} onDoubleClick={() => switchBranch(`refs/heads/${branch}`)} onContextMenu={event => showMenu(event, 'branch', `refs/heads/${branch}`)}><BranchIcon/>{branch}{!repo.conflict && pendingBranch === `refs/heads/${branch}` && <BranchSpinner/>}{repo.remoteBranches[branch] && repo.ahead[branch] > 0 && <span className="ahead-count" aria-label={`${repo.ahead[branch]} commits to push`}> {repo.ahead[branch]} <span aria-hidden="true">&#8593;</span></span>}{repo.behind[branch] > 0 && <span className="behind-count" aria-label={`${repo.behind[branch]} commits to pull`}> {repo.behind[branch]} <span aria-hidden="true">&#8595;</span></span>}</div>)}{!repo.local.length && <p className="muted">No local branches</p>}</div></details>
         <details className="sidebar-group" hidden={Boolean(filter) && !remoteBranches.length}><summary>Remote branches</summary><div className="sidebar-items">{remoteBranches.map(branch => <div className="branch-row" key={branch} {...branchSelection(`refs/remotes/${branch}`)} onDoubleClick={() => switchBranch(`refs/remotes/${branch}`)} onContextMenu={event => showMenu(event, 'branch', `refs/remotes/${branch}`)}><BranchIcon/>{branch.split('/').slice(1).join('/')}{!repo.conflict && pendingBranch === `refs/remotes/${branch}` && <BranchSpinner/>}</div>)}{!repo.remote.length && <p className="muted">No remote branches</p>}</div></details>
-        <details className="sidebar-group" hidden={Boolean(filter) && !filteredStashes.length}><summary>Stashes</summary><div className="sidebar-items">{filteredStashes.map(stash => <div className="stash-row" key={stash.ref} onContextMenu={event => showMenu(event, 'stash', stash.hash)}>{stash.message}</div>)}{!repo.stashes.length && <p className="muted">No stashes</p>}</div></details>
+        <details className="sidebar-group" hidden={Boolean(filter) && !filteredStashes.length}><summary>Stashes</summary><div className="sidebar-items">{filteredStashes.map(stash => <div className="stash-row" key={stash.ref} role="button" tabIndex={0} aria-pressed={selectedSidebarItem === `stash:${stash.hash}`} onClick={event => { setSelectedSidebarItem(`stash:${stash.hash}`); event.currentTarget.focus(); }} onContextMenu={event => showMenu(event, 'stash', stash.hash)}>{stash.message}</div>)}{!repo.stashes.length && <p className="muted">No stashes</p>}</div></details>
       </aside>
       {repo.conflict ? <MergeConflicts conflict={repo.conflict} execute={async input => { accept(await window.gitforge.conflictAction(repo.path, input)); setSelected(null); }}/> : <>
       <main className="repo-center"><section ref={historyElement} className="history" hidden={selection !== null}><div className="section-heading"><h2>Commit history</h2>{selected && !hasWorkingChanges && <button onClick={() => { setSelected(null); setSelection(null); setPicked({ staged: false, paths: [] }); }}>Working changes</button>}</div>

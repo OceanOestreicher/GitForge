@@ -1,6 +1,8 @@
+import { buildCommitGraph } from './commit-graph';
+import { GraphCell } from './graph-cell';
 import { AbortMergeDialog } from './abort-merge-dialog';
 import { Message } from './messages';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { parseDiff } from './diff';
 import { MergeConflicts, type Conflict } from './merge-conflicts';
 import { HistoryBranches, type HistoryLabel } from './history-branches';
@@ -14,7 +16,7 @@ function BranchSpinner() { return <span className="branch-spinner" role="status"
 
 export type FileChange = { path: string; status: string; untracked?: boolean; oldPath?: string };
 export type Commit = { hash: string; parents: string[]; author: string; date: string; subject: string; refs: string; labels: HistoryLabel[] };
-export type Repository = { path: string; name: string; branch: string; local: string[]; remote: string[]; ahead: Record<string, number>; behind: Record<string, number>; fileVersion: string; unpushed: number; canPush: boolean; mergePending: boolean; conflict: Conflict | null; remoteBranches: Record<string, { ref: string; remote: string; branch: string }>; stashes: string[]; stashEntries: { ref: string; hash: string; message: string }[]; staged: FileChange[]; unstaged: FileChange[]; commits: Commit[] };
+export type Repository = { path: string; name: string; branch: string; head: string | null; local: string[]; remote: string[]; ahead: Record<string, number>; behind: Record<string, number>; fileVersion: string; unpushed: number; canPush: boolean; mergePending: boolean; conflict: Conflict | null; remoteBranches: Record<string, { ref: string; remote: string; branch: string }>; stashes: string[]; stashEntries: { ref: string; hash: string; message: string }[]; staged: FileChange[]; unstaged: FileChange[]; commits: Commit[] };
 type Selection = { file: FileChange; staged?: boolean; hash?: string };
 
 function FileList({ files, tree, select, selectedPath, markedPaths = [], doubleClick, discard, contextMenu }: { files: FileChange[]; tree: boolean; select: (file: FileChange, event: React.MouseEvent<HTMLButtonElement>) => void; selectedPath?: string; markedPaths?: string[]; doubleClick?: (file: FileChange) => void; discard?: () => void; contextMenu?: (file: FileChange, event: React.MouseEvent<HTMLButtonElement>) => void }) {
@@ -82,6 +84,64 @@ export function RepositoryView({ initial, updated }: { initial: Repository; upda
   const [picked, setPicked] = useState<{ staged: boolean; paths: string[]; anchor?: string }>({ staged: false, paths: [] });
   const [pushMenu, setPushMenu] = useState(false);
   const [pushDialog, setPushDialog] = useState<{ plan: PushPlan; force: boolean } | null>(null);
+  const [filterDraft, setFilterDraft] = useState(''), [filter, setFilter] = useState('');
+  const query = filter.toLowerCase();
+  const localBranches = repo.local.filter(name => name.toLowerCase().includes(query));
+  const remoteBranches = repo.remote.filter(name => name.split('/').slice(1).join('/').toLowerCase().includes(query));
+  const filteredStashes = repo.stashEntries.filter(stash => stash.message.toLowerCase().includes(query));
+  const graph = useMemo(() => buildCommitGraph([{ hash: 'gitforge-wip', parents: repo.head ? [repo.head] : [] }, ...repo.commits]), [repo.commits, repo.head]);
+  const historyElement = useRef<HTMLElement>(null);
+  const history = useRef(repo.commits); history.current = repo.commits;
+  const remaining = useRef(hasMore); remaining.current = hasMore;
+  const pageRequest = useRef<Promise<Commit[]> | null>(null);
+  const navigationId = useRef(0);
+  const [scrollRequest, setScrollRequest] = useState<{ hash: string; id: number } | null>(null);
+  const loadPage = (): Promise<Commit[]> => {
+    if (pageRequest.current) return pageRequest.current;
+    const base = history.current;
+    setLoadingMore(true);
+    const request = (async () => {
+      const more = await window.gitforge.moreCommits(repo.path, base.length);
+      if (history.current[0]?.hash !== base[0]?.hash || history.current.length !== base.length) return history.current;
+      const known = new Set(base.map(commit => commit.hash));
+      const combined = [...base, ...more.filter(commit => !known.has(commit.hash))];
+      history.current = combined; remaining.current = more.length === 200 && combined.length > base.length;
+      setRepo(previous => ({ ...previous, commits: combined })); setHasMore(remaining.current);
+      return combined;
+    })();
+    pageRequest.current = request;
+    void request.finally(() => { if (pageRequest.current === request) { pageRequest.current = null; setLoadingMore(false); } }).catch(() => {});
+    return request;
+  };
+  const navigateToCommit = async (hash: string, select: boolean) => {
+    const id = ++navigationId.current;
+    try {
+      let loaded = history.current;
+      while (!loaded.some(commit => commit.hash === hash) && remaining.current) {
+        loaded = await loadPage(); if (id !== navigationId.current) return;
+      }
+      if (id !== navigationId.current) return;
+      const commit = loaded.find(commit => commit.hash === hash);
+      if (!commit) { if (select) setError(Message['history.commitUnavailable']); return; }
+      if (select) { setSelected(commit); setSelection(null); setPicked({ staged: false, paths: [] }); }
+      setScrollRequest({ hash, id });
+    } catch (failure) { if (id === navigationId.current) setError(message(failure)); }
+  };
+  useEffect(() => {
+    if (repo.head && !repo.conflict) {
+      if (!history.current.some(commit => commit.hash === repo.head) && repo.commits.length >= 200) { remaining.current = true; setHasMore(true); }
+      void navigateToCommit(repo.head, false);
+    }
+    return () => { navigationId.current++; };
+  }, [repo.head, repo.branch, Boolean(repo.conflict)]);
+  useEffect(() => {
+    if (!scrollRequest || selection || repo.conflict) return;
+    const frame = requestAnimationFrame(() => {
+      const row = historyElement.current?.querySelector<HTMLElement>(`[data-commit-hash="${scrollRequest.hash}"]`);
+      if (row) { row.scrollIntoView({ block: 'nearest' }); setScrollRequest(previous => previous?.id === scrollRequest.id ? null : previous); }
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [scrollRequest, repo.commits.length, selection, Boolean(repo.conflict)]);
   const accept = (value: Repository) => { setRepo(value); updated(value); setSelection(null); setPicked({ staged: false, paths: [] }); };
   const message = (error: unknown) => error instanceof Error ? error.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '') : String(error);
   const change = async (action: string, paths = picked.paths) => {
@@ -201,22 +261,23 @@ export function RepositoryView({ initial, updated }: { initial: Repository; upda
     {error && <div className="error" role="alert">{error}<button onClick={() => setError('')}>Dismiss</button></div>}
     <div className="repo-layout">
       <aside className="repo-sidebar">
-        <details className="sidebar-group" open><summary>Local branches</summary><div className="sidebar-items">{repo.local.map(branch => <div className={`${branch === repo.branch ? 'current-branch ' : ''}branch-row${repo.remoteBranches[branch] ? '' : ' local-only-branch'}`} title={repo.remoteBranches[branch] ? undefined : 'Local branch: not published to a remote'} key={branch} {...branchSelection(`refs/heads/${branch}`)} onDoubleClick={() => switchBranch(`refs/heads/${branch}`)} onContextMenu={event => showMenu(event, 'branch', `refs/heads/${branch}`)}><BranchIcon/>{branch}{!repo.conflict && pendingBranch === `refs/heads/${branch}` && <BranchSpinner/>}{repo.remoteBranches[branch] && repo.ahead[branch] > 0 && <span className="ahead-count" aria-label={`${repo.ahead[branch]} commits to push`}> {repo.ahead[branch]} <span aria-hidden="true">&#8593;</span></span>}{repo.behind[branch] > 0 && <span className="behind-count" aria-label={`${repo.behind[branch]} commits to pull`}> {repo.behind[branch]} <span aria-hidden="true">&#8595;</span></span>}</div>)}{!repo.local.length && <p className="muted">No local branches</p>}</div></details>
-        <details className="sidebar-group"><summary>Remote branches</summary><div className="sidebar-items">{repo.remote.map(branch => <div className="branch-row" key={branch} {...branchSelection(`refs/remotes/${branch}`)} onDoubleClick={() => switchBranch(`refs/remotes/${branch}`)} onContextMenu={event => showMenu(event, 'branch', `refs/remotes/${branch}`)}><BranchIcon/>{branch.split('/').slice(1).join('/')}{!repo.conflict && pendingBranch === `refs/remotes/${branch}` && <BranchSpinner/>}</div>)}{!repo.remote.length && <p className="muted">No remote branches</p>}</div></details>
-        <details className="sidebar-group"><summary>Stashes</summary><div className="sidebar-items">{repo.stashEntries.map(stash => <div className="stash-row" key={stash.ref} onContextMenu={event => showMenu(event, 'stash', stash.hash)}>{stash.message}</div>)}{!repo.stashes.length && <p className="muted">No stashes</p>}</div></details>
+        <form className="sidebar-filter" onSubmit={event => { event.preventDefault(); setFilter(filterDraft.trim()); }}><input aria-label="Filter branches and stashes" placeholder="Filter" value={filterDraft} onChange={event => setFilterDraft(event.target.value)}/>{filter && <button type="button" aria-label="Clear filter" onClick={() => { setFilter(''); setFilterDraft(''); }}>&#215;</button>}</form>
+        <details className="sidebar-group" hidden={Boolean(filter) && !localBranches.length} open><summary>Local branches</summary><div className="sidebar-items">{localBranches.map(branch => <div className={`${branch === repo.branch ? 'current-branch ' : ''}branch-row${repo.remoteBranches[branch] ? '' : ' local-only-branch'}`} title={repo.remoteBranches[branch] ? undefined : 'Local branch: not published to a remote'} key={branch} {...branchSelection(`refs/heads/${branch}`)} onDoubleClick={() => switchBranch(`refs/heads/${branch}`)} onContextMenu={event => showMenu(event, 'branch', `refs/heads/${branch}`)}><BranchIcon/>{branch}{!repo.conflict && pendingBranch === `refs/heads/${branch}` && <BranchSpinner/>}{repo.remoteBranches[branch] && repo.ahead[branch] > 0 && <span className="ahead-count" aria-label={`${repo.ahead[branch]} commits to push`}> {repo.ahead[branch]} <span aria-hidden="true">&#8593;</span></span>}{repo.behind[branch] > 0 && <span className="behind-count" aria-label={`${repo.behind[branch]} commits to pull`}> {repo.behind[branch]} <span aria-hidden="true">&#8595;</span></span>}</div>)}{!repo.local.length && <p className="muted">No local branches</p>}</div></details>
+        <details className="sidebar-group" hidden={Boolean(filter) && !remoteBranches.length}><summary>Remote branches</summary><div className="sidebar-items">{remoteBranches.map(branch => <div className="branch-row" key={branch} {...branchSelection(`refs/remotes/${branch}`)} onDoubleClick={() => switchBranch(`refs/remotes/${branch}`)} onContextMenu={event => showMenu(event, 'branch', `refs/remotes/${branch}`)}><BranchIcon/>{branch.split('/').slice(1).join('/')}{!repo.conflict && pendingBranch === `refs/remotes/${branch}` && <BranchSpinner/>}</div>)}{!repo.remote.length && <p className="muted">No remote branches</p>}</div></details>
+        <details className="sidebar-group" hidden={Boolean(filter) && !filteredStashes.length}><summary>Stashes</summary><div className="sidebar-items">{filteredStashes.map(stash => <div className="stash-row" key={stash.ref} onContextMenu={event => showMenu(event, 'stash', stash.hash)}>{stash.message}</div>)}{!repo.stashes.length && <p className="muted">No stashes</p>}</div></details>
       </aside>
       {repo.conflict ? <MergeConflicts conflict={repo.conflict} execute={async input => { accept(await window.gitforge.conflictAction(repo.path, input)); setSelected(null); }}/> : <>
-      <main className="repo-center"><section className="history" hidden={selection !== null}><div className="section-heading"><h2>Commit history</h2></div>
-        <table className="history-table"><thead><tr><th>Branch / Tag</th><th>Commit</th><th>Author</th><th>Date</th></tr></thead><tbody><tr className={selected === null ? 'selected wip-row' : 'wip-row'}><td/><td colSpan={3}><button className="commit-link wip-link" onClick={() => { setSelected(null); setSelection(null); setPicked({ staged: false, paths: [] }); }}><span className="wip-marker" aria-hidden="true"/>WIP <span className="muted">{new Set([...repo.unstaged, ...repo.staged].map(file => file.path)).size} files changed</span></button></td></tr>{repo.commits.map(commit => <tr key={commit.hash} className={selected?.hash === commit.hash ? 'selected' : ''} onContextMenu={event => showMenu(event, 'commit', commit.hash)}><td className="history-branch-cell"><HistoryBranches labels={commit.labels}/></td><td><button className="commit-link" onClick={() => { setSelected(commit); setSelection(null); setPicked({ staged: false, paths: [] }); }}><code>{commit.hash.slice(0, 7)}</code> {commit.subject}</button></td><td>{commit.author}</td><td>{new Date(commit.date).toLocaleDateString()}</td></tr>)}</tbody></table>
+      <main className="repo-center"><section ref={historyElement} className="history" hidden={selection !== null}><div className="section-heading"><h2>Commit history</h2></div>
+        <table className="history-table"><thead><tr><th>Branch / Tag</th><th className="graph-heading">Graph</th><th>Commit</th><th>Author</th><th>Date</th></tr></thead><tbody><tr className={selected === null ? 'selected wip-row' : 'wip-row'}><td/><GraphCell row={graph.rows[0]} lanes={graph.lanes} wip/><td colSpan={3}><button className="commit-link wip-link" onClick={() => { setSelected(null); setSelection(null); setPicked({ staged: false, paths: [] }); }}><span className="wip-marker" aria-hidden="true"/>WIP <span className="muted">{new Set([...repo.unstaged, ...repo.staged].map(file => file.path)).size} files changed</span></button></td></tr>{repo.commits.map((commit, index) => <tr key={commit.hash} data-commit-hash={commit.hash} className={`${selected?.hash === commit.hash ? 'selected ' : ''}${commit.hash === repo.head ? 'current-commit' : ''}`} onContextMenu={event => showMenu(event, 'commit', commit.hash)}><td className="history-branch-cell"><HistoryBranches labels={commit.labels} currentBranch={commit.hash === repo.head ? repo.branch : undefined} color={graph.rows[index + 1].color}/></td><GraphCell row={graph.rows[index + 1]} lanes={graph.lanes} current={commit.hash === repo.head}/><td><button className="commit-link" onClick={() => { setSelected(commit); setSelection(null); setPicked({ staged: false, paths: [] }); }}><code>{commit.hash.slice(0, 7)}</code> {commit.subject}</button></td><td>{commit.author}</td><td>{new Date(commit.date).toLocaleDateString()}</td></tr>)}</tbody></table>
         {!repo.commits.length && <p className="muted">This repository has no commits yet.</p>}
-        {hasMore && <button disabled={loadingMore} onClick={async () => { setLoadingMore(true); try { const more = await window.gitforge.moreCommits(repo.path, repo.commits.length); setRepo(previous => ({ ...previous, commits: [...previous.commits, ...more] })); setHasMore(more.length === 200); } catch(e) { setError(String(e)); } finally { setLoadingMore(false); } }}>Load more commits</button>}
+        {hasMore && <button disabled={loadingMore} onClick={() => void loadPage().catch(failure => setError(message(failure)))}>Load more commits</button>}
       </section>
       <section className="detail-panel diff-panel" aria-label="Diff pane" hidden={selection === null}><div className="section-heading"><h2>File diff</h2></div>
         {selection ? <><h3 className="diff-path">{selection.file.path}</h3><pre className="diff" aria-label="File diff">{diff ? parseDiff(diff).map((row, index) => <div className={`diff-row ${row.kind === 'notice' ? 'diff-notice' : row.kind}${row.startsHunk ? ' hunk-start' : ''}`} key={index}><span className="line-number old-line" aria-label="Old line number">{row.oldLine ?? ''}</span><span className="line-number new-line" aria-label="New line number">{row.newLine ?? ''}</span><span className="diff-code">{row.marker ? `${row.marker} ${row.text}` : row.text || ' '}</span></div>) : 'Loading diff…'}</pre></> : <p className="muted">Select a file to view its changes.</p>}
       </section>
       </main>
       {selected ? <section className="commit-information"><div className="section-heading"><h2>Commit information</h2><button aria-pressed={tree} onClick={() => setTree(value => !value)}>{tree ? 'Path view' : 'Tree view'}</button></div>
-        <><dl className="commit-metadata"><dt>Hash</dt><dd>{selected.hash}</dd><dt>Parents</dt><dd>{selected.parents.join(', ') || 'None (initial commit)'}</dd><dt>Author</dt><dd>{selected.author}</dd><dt>Date</dt><dd>{new Date(selected.date).toLocaleString()}</dd></dl>{details ? <><pre className="commit-message">{details.message}</pre><p className="summary-counts">{details.files.filter(f => f.status === 'A').length} added · {details.files.filter(f => f.status === 'M').length} changed · {details.files.filter(f => f.status === 'D').length} deleted</p><FileList files={details.files} tree={tree} selectedPath={selection?.hash === selected.hash ? selection.file.path : undefined} select={file => toggleFile({ file, hash: selected.hash })}/></> : <p>Loading commit…</p>}</>
+        <><dl className="commit-metadata"><dt>Hash</dt><dd>{selected.hash}</dd><dt>Parents</dt><dd className="parent-commits">{selected.parents.length ? selected.parents.map(parent => <button key={parent} className="parent-commit-link" onClick={() => void navigateToCommit(parent, true)}>{parent}</button>) : 'None (initial commit)'}</dd><dt>Author</dt><dd>{selected.author}</dd><dt>Date</dt><dd>{new Date(selected.date).toLocaleString()}</dd></dl>{details ? <><pre className="commit-message">{details.message}</pre><p className="summary-counts">{details.files.filter(f => f.status === 'A').length} added · {details.files.filter(f => f.status === 'M').length} changed · {details.files.filter(f => f.status === 'D').length} deleted</p><FileList files={details.files} tree={tree} selectedPath={selection?.hash === selected.hash ? selection.file.path : undefined} select={file => toggleFile({ file, hash: selected.hash })}/></> : <p>Loading commit…</p>}</>
       </section> : 
       <section className="working-changes"><div className="section-heading"><h2>Working changes</h2><button aria-pressed={tree} onClick={() => setTree(value => !value)}>{tree ? 'Path view' : 'Tree view'}</button></div><section className="change-group"><div className="change-heading"><h3>Unstaged files ({repo.unstaged.length})</h3><button disabled={busy || !repo.unstaged.length} onClick={() => void change('stage', repo.unstaged.map(file => file.path))}>Stage All</button></div><div className="change-scroll" role="region" aria-label="Unstaged files" tabIndex={0}><FileList files={repo.unstaged} tree={tree} selectedPath={selection && !selection.hash && !selection.staged ? selection.file.path : undefined} markedPaths={!picked.staged ? picked.paths : []} select={(file, event) => { setSelected(null); chooseFile(file, false, event); }} doubleClick={file => void change('stage', !picked.staged && picked.paths.includes(file.path) ? picked.paths : [file.path])} discard={() => { if (!picked.staged) void change('discard'); }} contextMenu={(file, event) => fileMenu(false, file, event)}/></div></section><section className="change-group"><div className="change-heading"><h3>Staged files ({repo.staged.length})</h3><button disabled={busy || !repo.staged.length} onClick={() => void change('unstage', repo.staged.map(file => file.path))}>Unstage All</button></div><div className="change-scroll" role="region" aria-label="Staged files" tabIndex={0}><FileList files={repo.staged} tree={tree} selectedPath={selection && !selection.hash && selection.staged ? selection.file.path : undefined} markedPaths={picked.staged ? picked.paths : []} select={(file, event) => { setSelected(null); chooseFile(file, true, event); }} doubleClick={file => void change('unstage', picked.staged && picked.paths.includes(file.path) ? picked.paths : [file.path])} contextMenu={(file, event) => fileMenu(true, file, event)}/></div></section><div className="commit-form">{repo.mergePending && !repo.conflict && <p className="merge-pending">Commit to complete the pending merge.</p>}<label>Commit title<input value={title} onChange={event => setTitle(event.target.value)} placeholder="Commit title"/></label><label>Description<textarea value={description} onChange={event => setDescription(event.target.value)} placeholder="Description (optional)"/></label><div className="commit-actions"><button className="commit-button" disabled={busy || (!repo.staged.length && !repo.mergePending) || !title.trim()} onClick={async () => { if (busy) return; setBusy(true); setError(''); try { accept(await window.gitforge.commitChanges(repo.path, { title, description })); setTitle(''); setDescription(''); } catch(error) { setError(message(error)); } finally { setBusy(false); } }}>Commit</button>{repo.mergePending && !repo.conflict && <button className="abort-merge" disabled={busy} onClick={() => setConfirmingAbort(true)}>Abort Merge</button>}</div></div></section> }
       </>}

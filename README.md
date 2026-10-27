@@ -95,6 +95,12 @@ Conflict choices survive an application restart. Binary files and deletions can
 be resolved by keeping either full version. Fast-forward merges do not create an
 extra commit; conflict-free divergent merges create one automatically.
 
+Phase 10 adds a colored commit graph with divergence and merge paths, a marked
+and highlighted checked-out tip, and navigation to commits beyond the first
+history page. Click a parent hash in Commit information to select and scroll to
+that parent. The sidebar Filter applies on Enter and matches branch and stash
+names; empty sections hide until the filter is cleared.
+
 ## Error messages
 
 Maintain application error and warning text in `src/messages.ts`. Retrieve static

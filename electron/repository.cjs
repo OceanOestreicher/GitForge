@@ -11,7 +11,7 @@ function git(cwd, args, environment = {}) {
 }
 async function commits(root, skip = 0) {
   if (!await git(root, ['rev-parse', '--verify', 'HEAD']).catch(() => '')) return [];
-  const raw = await git(root, ['log', '--branches', '--remotes', 'HEAD', '--date-order', '--max-count=200', `--skip=${skip}`, '--format=%H%x00%P%x00%an%x00%aI%x00%s%x00%D%x00']);
+  const raw = await git(root, ['log', '--branches', '--remotes', 'HEAD', '--topo-order', '--max-count=200', `--skip=${skip}`, '--format=%H%x00%P%x00%an%x00%aI%x00%s%x00%D%x00']);
   const fields = raw.split('\0');
   const result = [];
   for (let i = 0; i + 5 < fields.length; i += 6) result.push({ hash: fields[i].trim(), parents: fields[i + 1].split(' ').filter(Boolean), author: fields[i + 2], date: fields[i + 3], subject: fields[i + 4], refs: fields[i + 5] });
@@ -41,11 +41,12 @@ async function commits(root, skip = 0) {
   return result;
 }
 async function snapshot(root) {
-  const [branch, refs, stash, status, history] = await Promise.all([
+  const [branch, refs, stash, status, history, currentHead] = await Promise.all([
     git(root, ['symbolic-ref', '--short', '-q', 'HEAD']).catch(async () => `Detached HEAD (${(await git(root, ['rev-parse', '--short', 'HEAD'])).trim()})`),
     git(root, ['for-each-ref', '--format=%(refname)%00%(symref)', 'refs/heads', 'refs/remotes']),
     git(root, ['stash', 'list', '--format=%gd%x09%s%x09%H']),
-    git(root, ['status', '--porcelain=v1', '-z', '--untracked-files=all']), commits(root)
+    git(root, ['status', '--porcelain=v1', '-z', '--untracked-files=all']), commits(root),
+    git(root, ['rev-parse', '--verify', 'HEAD']).catch(() => '')
   ]);
   const local = [], remote = [];
   const fullRefs = refs.trimEnd().split('\n').filter(Boolean).map(line => line.split('\0')).filter(([, symbolic]) => !symbolic).map(([ref]) => ref);
@@ -78,7 +79,7 @@ async function snapshot(root) {
   const stashEntries = stash.trim().split('\n').filter(Boolean).map(line => { const fields = line.split('\t'); return { ref: fields[0], hash: fields[fields.length - 1], message: fields.slice(1, -1).join('\t') }; });
   const conflict = await require('./conflicts.cjs').status(root);
   const mergePending = Boolean((await git(root, ['rev-parse', '-q', '--verify', 'MERGE_HEAD']).catch(() => '')).trim());
-  return { path: root, name: path.basename(root), branch: branch.trim(), local, remote, ahead, behind, remoteBranches, canPush: local.includes(branch.trim()) && (!remoteBranches[branch.trim()] || ahead[branch.trim()] > 0), fileVersion, conflict, mergePending, unpushed: ahead[branch.trim()] || 0, stashes: stashEntries.map(entry => `${entry.ref}\t${entry.message}`), stashEntries, staged, unstaged, commits: history };
+  return { path: root, name: path.basename(root), branch: branch.trim(), head: currentHead.trim() || null, local, remote, ahead, behind, remoteBranches, canPush: local.includes(branch.trim()) && (!remoteBranches[branch.trim()] || ahead[branch.trim()] > 0), fileVersion, conflict, mergePending, unpushed: ahead[branch.trim()] || 0, stashes: stashEntries.map(entry => `${entry.ref}\t${entry.message}`), stashEntries, staged, unstaged, commits: history };
 }
 async function correspondingRemote(root, name, refs, upstream) {
   refs ??= (await git(root, ['for-each-ref', '--format=%(refname)', 'refs/remotes'])).trim().split('\n');

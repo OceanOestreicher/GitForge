@@ -1,5 +1,5 @@
 import { version } from '../package.json';
-import { Message } from './messages';
+import { Message, addData } from './messages';
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './style.css';
@@ -55,7 +55,8 @@ function App() {
   const activeProfile = profiles.find(profile => profile.active);
   const [profileTime, setProfileTime] = useState(Date.now());
   const expiration = activeProfile?.expiresAt ? Date.parse(activeProfile.expiresAt) : NaN;
-  const profileWarning = activeProfile?.patInvalid ? Message["profile.pat.invalid"] : Number.isFinite(expiration) && expiration <= profileTime ? Message["profile.pat.expired"] : Number.isFinite(expiration) && expiration - profileTime <= 2 * 24 * 60 * 60 * 1000 ? Message["profile.pat.expiringSoon"] : '';
+  const profileExpired = Boolean(activeProfile?.patInvalid) || Number.isFinite(expiration) && expiration <= profileTime;
+  const profileWarning = activeProfile?.patInvalid ? Message["profile.pat.invalid"] : profileExpired ? Message["profile.pat.expired"] : Number.isFinite(expiration) && expiration - profileTime <= 7 * 24 * 60 * 60 * 1000 ? addData(Message["profile.pat.expiringSoon"], new Date(expiration).toLocaleString()) : '';
   useEffect(() => {
     let alive = true;
     const refresh = async () => { try { const values = await window.gitforge.refreshProfileStatus(); if (alive) { setProfiles(values); setProfileTime(Date.now()); } } catch { /* Keep cached status while offline. */ } };
@@ -175,7 +176,7 @@ function App() {
       {overflowing && <button className="icon scroll" aria-label="Scroll tabs right" onClick={() => tabStrip.current?.scrollBy({ left: 240, behavior: 'smooth' })}>›</button>}
       <button className="icon" aria-label="New Tab" title="New Tab (Ctrl+T)" onClick={newTab}>+</button>
       </div>
-      {activeProfile && profileWarning && <span className="profile-token-warning" role="img" aria-label={profileWarning} title={profileWarning}><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2 19 18H1Z"/><path d="M10 7v5M10 15v.5"/></svg></span>}
+      {activeProfile && profileWarning && <span className={`profile-token-warning${profileExpired ? ' profile-token-expired' : ''}`} role="img" aria-label={profileWarning} title={profileWarning}><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2 19 18H1Z"/><path d="M10 7v5M10 15v.5"/></svg></span>}
       {activeProfile && <span className="active-profile-name" aria-label="Active profile name" title={activeProfile.name}>{activeProfile.name}</span>}
       <button className={`icon settings ${preferences ? 'selected' : ''}`} disabled={profileRequired} aria-label="Preferences" aria-pressed={preferences || profileRequired} title="Preferences" onClick={() => { setPreferences(previous => !previous); }}>⚙</button>
     </header>

@@ -97,6 +97,56 @@ test('stage and unstage files, discard without losing staged content, author a c
   } finally { await app.close(); }
 });
 
+test('working file double clicks stage without opening a diff, while single clicks toggle it in both views', async () => {
+  await fs.writeFile(path.join(root, 'tracked.txt'), 'changed\n');
+  const app = await launchElectron();
+  try {
+    const page = await open(app);
+    await page.evaluate(() => {
+      window.diffRequests = 0;
+      const original = window.gitforge.fileDiff;
+      window.gitforge.fileDiff = (...args) => { window.diffRequests++; return original(...args); };
+    });
+    for (const tree of [false, true]) {
+      if (tree) await page.getByRole('button', { name: 'Tree view', exact: true }).click();
+      await row(page, 'Unstaged files', 'tracked.txt').dblclick({ delay: 80 });
+      await expect(row(page, 'Staged files', 'tracked.txt')).toBeVisible();
+      await row(page, 'Staged files', 'tracked.txt').dblclick({ delay: 80 });
+      await expect(row(page, 'Unstaged files', 'tracked.txt')).toBeVisible();
+      expect(await page.evaluate(() => window.diffRequests)).toBe(0);
+    }
+    await row(page, 'Unstaged files', 'tracked.txt').click();
+    await expect(page.getByRole('region', { name: 'Diff pane', exact: true })).toBeVisible();
+    await row(page, 'Unstaged files', 'tracked.txt').click();
+    await expect(page.getByRole('region', { name: 'Diff pane', exact: true })).toHaveCount(0);
+    await expect(page.locator('.history')).toBeVisible();
+  } finally { await app.close(); }
+});
+
+test('Discard Changes menu reverts selected unstaged files, removes untracked files and preserves staged content', async () => {
+  await fs.writeFile(path.join(root, 'tracked.txt'), 'staged version\n'); git('add', 'tracked.txt');
+  await fs.writeFile(path.join(root, 'tracked.txt'), 'unstaged version\n');
+  await fs.writeFile(path.join(root, 'scratch.txt'), 'scratch\n');
+  const app = await launchElectron();
+  try {
+    const page = await open(app);
+    await row(page, 'Staged files', 'tracked.txt').click({ button: 'right' });
+    await expect(page.getByRole('menuitem', { name: 'Stash', exact: true })).toBeVisible();
+    await expect(page.getByRole('menuitem', { name: 'Discard Changes', exact: true })).toHaveCount(0);
+    await page.locator('.working-changes h2').click();
+    await row(page, 'Unstaged files', 'tracked.txt').click();
+    await row(page, 'Unstaged files', 'scratch.txt').click({ modifiers: ['Control'] });
+    await row(page, 'Unstaged files', 'tracked.txt').click({ button: 'right' });
+    expect(await page.getByRole('menuitem').allTextContents()).toEqual(['Discard Changes', 'Stash']);
+    await page.getByRole('menuitem', { name: 'Discard Changes', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Unstaged files (0)', exact: true })).toBeVisible();
+    await expect(row(page, 'Staged files', 'tracked.txt')).toBeVisible();
+    expect(await fs.readFile(path.join(root, 'tracked.txt'), 'utf8')).toMatch(/^staged version\r?\n$/);
+    expect(git('show', ':tracked.txt')).toBe('staged version');
+    await expect(fs.stat(path.join(root, 'scratch.txt'))).rejects.toThrow();
+  } finally { await app.close(); }
+});
+
 test('publish a missing remote branch only after confirmation', async () => {
   const app = await launchElectron();
   try {

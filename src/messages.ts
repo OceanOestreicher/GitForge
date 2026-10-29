@@ -103,7 +103,7 @@ export const Message = Object.freeze({
   "profile.notFound": "The profile no longer exists.",
   "profile.pat.decryptFailed": "The active profile PAT could not be decrypted. Edit the profile and enter a new PAT.",
   "profile.pat.expired": "The active profile PAT has expired. Edit this profile to replace it.",
-  "profile.pat.expiringSoon": "The active profile PAT expires within 2 days. Edit this profile to replace it.",
+  "profile.pat.expiringSoon": "The PAT for this profile expires on {0}.\nEdit this profile to replace it.",
   "profile.pat.invalid": "The active profile PAT has expired or is no longer valid. Edit this profile to replace it.",
   "profile.pat.savedDecryptFailed": "The saved PAT could not be decrypted. Enter a new PAT and try again.",
   "profile.required": "Create a profile before using repositories.",

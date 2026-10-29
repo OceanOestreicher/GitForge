@@ -138,7 +138,7 @@ test('cancel discards profile creation and edits', async () => {
   } finally { await app.close(); }
 });
 
-test('active profile warns within two days or after expiration, preserves status offline, and clears after token replacement', async () => {
+test('active profile warns within seven days or after expiration, preserves status offline, and clears after token replacement', async () => {
   let app = await launchElectron();
   try {
     let page = await app.firstWindow();
@@ -151,15 +151,22 @@ test('active profile warns within two days or after expiration, preserves status
       };
     }, { expiresAt, status });
     const refresh = async () => { await page.evaluate(() => window.gitforge.refreshProfileStatus()); await page.reload(); await expect(page.getByLabel('Active profile name', { exact: true })).toHaveText('Test profile'); };
-    for (const [hours, shown] of [[72, false], [49, false], [47, true], [-1, true]]) {
-      await response(new Date(Date.now() + hours * 3600000).toISOString()); await refresh();
+    for (const [hours, shown] of [[192, false], [169, false], [168, true], [167, true], [-1, true]]) {
+      const expiresAt = new Date(Date.now() + hours * 3600000).toISOString();
+      await response(expiresAt); await refresh();
       await expect(warning()).toHaveCount(shown ? 1 : 0);
-      if (shown) await expect(warning()).toHaveAttribute('title', hours < 0 ? /has expired/ : /within 2 days/);
+      if (shown) await expect(warning()).toHaveAttribute('title', hours < 0 ? /has expired/ : /The PAT for this profile expires on/);
+      if (shown) await expect(warning()).toHaveCSS('color', hours < 0 ? 'rgb(239, 115, 115)' : 'rgb(237, 199, 74)');
+      if (shown && hours > 0) {
+        const expiration = await page.evaluate(value => new Date(value).toLocaleString(), expiresAt);
+        expect(await warning().getAttribute('title')).toBe(`The PAT for this profile expires on ${expiration}.\nEdit this profile to replace it.`);
+      }
     }
     await response(null, 0); await refresh(); await expect(warning()).toHaveCount(1);
     await response(null); await refresh(); await expect(warning()).toHaveCount(0);
     await response(null, 403); await refresh(); await expect(warning()).toHaveCount(0);
     await response(null, 401); await refresh(); await expect(warning()).toHaveAttribute('title', /expired or is no longer valid/);
+    await expect(warning()).toHaveCSS('color', 'rgb(239, 115, 115)');
     await app.close(); app = await launchElectron(); page = await app.firstWindow(); await expect(warning()).toHaveCount(1);
     await response(new Date(Date.now() + 90 * 86400000).toISOString());
     await page.getByRole('button', { name: 'Preferences', exact: true }).click(); await action(page, 'Test profile', 'Edit');
@@ -189,7 +196,7 @@ test('profile expiration migration preserves existing encrypted profile credenti
 test('PAT status refresh and the warning update automatically as the token approaches expiration', async () => {
   const app = await launchElectron();
   try {
-    const page = await app.firstWindow(), now = Date.now(), expiresAt = new Date(now + (48 * 60 + 2) * 60000).toISOString();
+    const page = await app.firstWindow(), now = Date.now(), expiresAt = new Date(now + (168 * 60 + 2) * 60000).toISOString();
     await app.evaluate(({ net }, expiresAt) => {
       net.fetch = async () => ({ ok: true, status: 200, headers: { get: name => name === 'github-authentication-token-expiration' ? expiresAt : null }, json: async () => ({ login: 'fixture' }) });
     }, expiresAt);
@@ -197,8 +204,8 @@ test('PAT status refresh and the warning update automatically as the token appro
     await page.clock.runFor(5100); await expect.poll(async () => (await page.evaluate(() => window.gitforge.listProfiles()))[0].expiresAt).toBe(expiresAt);
     await expect(page.locator('.profile-token-warning')).toHaveCount(0);
     await page.clock.setSystemTime(new Date(now + 3 * 60000)); await page.clock.runFor(60000);
-    await expect(page.locator('.profile-token-warning')).toHaveAttribute('title', /within 2 days/);
-    await page.clock.setSystemTime(new Date(now + 49 * 3600000)); await page.clock.runFor(60000);
+    await expect(page.locator('.profile-token-warning')).toHaveAttribute('title', /The PAT for this profile expires on/);
+    await page.clock.setSystemTime(new Date(now + 169 * 3600000)); await page.clock.runFor(60000);
     await expect(page.locator('.profile-token-warning')).toHaveAttribute('title', /has expired/);
   } finally { await app.close(); }
 });

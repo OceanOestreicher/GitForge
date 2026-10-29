@@ -76,7 +76,7 @@ export function RepositoryView({ initial, updated }: { initial: Repository; upda
   const [description, setDescription] = useState('');
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(initial.commits.length === 200);
-  const [context, setContext] = useState<{ x: number; y: number; kind: 'commit' | 'branch' | 'stash' | 'files'; target: string; paths?: string[]; canReset?: boolean } | null>(null);
+  const [context, setContext] = useState<{ x: number; y: number; kind: 'commit' | 'branch' | 'stash' | 'files'; target: string; paths?: string[]; staged?: boolean; canReset?: boolean } | null>(null);
   const [prompt, setPrompt] = useState<BranchPrompt | null>(null);
   const [busy, setBusy] = useState(false);
   const [selectedSidebarItem, setSelectedSidebarItem] = useState<string | null>(null);
@@ -145,8 +145,12 @@ export function RepositoryView({ initial, updated }: { initial: Repository; upda
     return () => cancelAnimationFrame(frame);
   }, [scrollRequest, repo.commits.length, selection, Boolean(repo.conflict)]);
   const accept = (value: Repository) => { setRepo(value); updated(value); setSelection(null); setPicked({ staged: false, paths: [] }); };
+  const fileClickTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const cancelFileClick = () => clearTimeout(fileClickTimer.current);
+  useEffect(() => cancelFileClick, [selected, Boolean(repo.conflict)]);
   const message = (error: unknown) => error instanceof Error ? error.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '') : String(error);
   const change = async (action: string, paths = picked.paths) => {
+    cancelFileClick();
     if (busy || !paths.length) return;
     setBusy(true); setError('');
     try { accept(await window.gitforge.changeFiles(repo.path, { action, paths })); }
@@ -154,6 +158,8 @@ export function RepositoryView({ initial, updated }: { initial: Repository; upda
   };
   const chooseFile = (file: FileChange, staged: boolean, event: React.MouseEvent<HTMLButtonElement>) => {
     if (busy) return;
+    cancelFileClick();
+    if (event.detail > 1) return;
     if (event.ctrlKey || event.metaKey || event.shiftKey) {
       let paths = picked.staged === staged ? [...picked.paths] : [];
       if (event.shiftKey && picked.staged === staged && picked.anchor) {
@@ -165,7 +171,8 @@ export function RepositoryView({ initial, updated }: { initial: Repository; upda
     } else {
       const closing = selection?.file.path === file.path && Boolean(selection.staged) === staged && !selection.hash;
       setPicked({ staged, paths: closing ? [] : [file.path], anchor: file.path });
-      toggleFile({ file, staged });
+      // Keep selection immediate, but let a double click cancel the diff toggle.
+      fileClickTimer.current = setTimeout(() => toggleFile({ file, staged }), 220);
     }
   };
   const startPush = async (force: boolean, branch = repo.branch) => {
@@ -228,9 +235,11 @@ export function RepositoryView({ initial, updated }: { initial: Repository; upda
     setSelectedSidebarItem(previous => previous && (previous.startsWith('stash:') ? repo.stashEntries.some(stash => `stash:${stash.hash}` === previous) : previous.startsWith('refs/heads/') ? repo.local.includes(previous.slice(11)) : repo.remote.includes(previous.slice(13))) ? previous : null);
   }, [repo.local, repo.remote, repo.stashEntries]);
   const fileMenu = (staged: boolean, file: FileChange, event: React.MouseEvent<HTMLButtonElement>) => {
+    cancelFileClick();
     const paths = picked.staged === staged && picked.paths.includes(file.path) ? picked.paths : [file.path];
     setPicked({ staged, paths, anchor: file.path });
     showMenu(event, 'files', file.path, paths);
+    setContext(previous => previous?.kind === 'files' ? { ...previous, staged } : previous);
   };
   const requestId = useRef(0);
   const toggleFile = (next: Selection) => {
@@ -297,7 +306,7 @@ export function RepositoryView({ initial, updated }: { initial: Repository; upda
     {context && <div role="menu" className="context-menu" style={{ left: context.x, top: context.y }}>
       {context.kind === 'commit' && <><button role="menuitem" onClick={() => runBranch({ action: 'checkout', hash: context.target })}>Checkout Commit</button><button role="menuitem" onClick={() => setPrompt({ kind: 'create', input: { action: 'create', hash: context.target } })}>Create Branch From Commit</button><button role="menuitem" disabled={!context.canReset} onClick={() => setPrompt({ kind: 'reset', input: { action: 'reset', hash: context.target } })}>Reset Branch To Commit</button></>}
       {context.kind === 'branch' && <><div role="group" aria-label="Remote actions"><button role="menuitem" disabled={busy || (context.target.startsWith('refs/heads/') && !repo.remoteBranches[context.target.slice(11)])} onClick={() => void runRemote('fetch', context.target)}>Fetch</button><button role="menuitem" disabled={busy || !context.target.startsWith('refs/heads/') || !repo.remoteBranches[context.target.slice(11)] || !repo.behind[context.target.slice(11)] || (context.target === `refs/heads/${repo.branch}` ? Boolean(repo.staged.length || repo.unstaged.length) : Boolean(repo.ahead[context.target.slice(11)]))} onClick={() => void runRemote('pull', context.target)}>Pull</button><button role="menuitem" disabled={busy || !context.target.startsWith('refs/heads/') || Boolean(repo.remoteBranches[context.target.slice(11)] && !repo.ahead[context.target.slice(11)])} onClick={() => void startPush(false, context.target.slice(11))}>Push</button></div><div role="separator" className="context-menu-separator"/><button role="menuitem" disabled={busy || context.target === `refs/heads/${repo.branch}`} onClick={() => switchBranch(context.target)}>Checkout Branch</button><button role="menuitem" onClick={() => setPrompt({ kind: 'create', input: { action: 'create', ref: context.target } })}>Create Branch</button>{context.target.startsWith('refs/heads/') && context.target !== `refs/heads/${repo.branch}` && <button role="menuitem" onClick={() => deleteBranch(context.target)}>Delete Branch</button>}{context.target.startsWith('refs/remotes/') && <button role="menuitem" onClick={() => deleteBranch(context.target)}>Delete Branch</button>}<button role="menuitem" disabled={context.target === `refs/heads/${repo.branch}`} onClick={() => runBranch({ action: 'merge', ref: context.target })}>Merge into current branch</button></>}
-      {context.kind === 'files' && <button role="menuitem" onClick={() => setPrompt({ kind: 'stash', input: { action: 'stash', paths: context.paths } })}>Stash</button>}
+      {context.kind === 'files' && <>{!context.staged && <button role="menuitem" onClick={() => void change('discard', context.paths)}>Discard Changes</button>}<button role="menuitem" onClick={() => setPrompt({ kind: 'stash', input: { action: 'stash', paths: context.paths } })}>Stash</button></>}
       {context.kind === 'stash' && <><button role="menuitem" onClick={() => setPrompt({ kind: 'apply-stash', input: { action: 'apply-stash', hash: context.target } })}>Apply Stash</button><button role="menuitem" onClick={() => setPrompt({ kind: 'delete-stash', input: { action: 'delete-stash', hash: context.target } })}>Delete Stash</button></>}
     </div>}
   </div>;

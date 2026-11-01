@@ -35,6 +35,8 @@ for (const source of ['new tab', 'File menu']) {
       await expect(page.getByRole('tab', { name, exact: true })).toHaveAttribute('aria-selected', 'true');
       await expect(page.getByRole('tab')).toHaveCount(source === 'new tab' ? 1 : 2);
       await expect(page.locator('.repo-name')).toContainText('development');
+      await expect(page.locator('.repo-sidebar .current-branch')).toHaveText('development');
+      await expect(page.locator('.repo-buttons').getByRole('button', { name: 'Push', exact: true })).toBeDisabled();
       await expect(page.locator('.working-changes')).toContainText('README.md');
       await expect(page.locator('.working-changes')).toContainText('.gitignore');
       const root = path.join(parent, name);
@@ -50,6 +52,14 @@ for (const source of ['new tab', 'File menu']) {
       }).toBe(root);
       await app.close(); app = await launchElectron(); page = await app.firstWindow();
       await expect(page.getByRole('tab', { name, exact: true })).toBeVisible();
+      await expect(page.locator('.repo-sidebar .current-branch')).toHaveText('development');
+      await page.getByRole('button', { name: 'Stage All', exact: true }).click();
+      await page.getByLabel('Commit title', { exact: true }).fill('Initial commit');
+      await page.getByRole('button', { name: 'Commit', exact: true }).click();
+      await expect(page.locator('.history')).toContainText('Initial commit');
+      await expect(page.locator('.repo-sidebar .current-branch')).toHaveCount(1);
+      await expect(page.locator('.repo-sidebar .current-branch')).toHaveText('development');
+      expect(execFileSync('git', ['branch', '--list'], { cwd: root, encoding: 'utf8' }).trim()).toBe('* development');
     } finally { await app.close(); }
   });
 }

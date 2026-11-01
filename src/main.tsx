@@ -10,11 +10,13 @@ import { ProfilesPage, type Profile, type ProfileInput } from './profiles';
 import type { PushPlan, PushInput } from './push';
 import type { BranchAction } from './branch-dialog';
 import type { ConflictAction } from './merge-conflicts';
+import { diffCache } from './diff-cache';
 
 declare global {
   interface Window {
     gitforge: {
       gitStatus(): Promise<boolean>;
+      workspaceReady(): void;
       listProfiles(): Promise<Profile[]>;
       refreshProfileStatus(): Promise<Profile[]>;
       createProfile(input: ProfileInput): Promise<Profile[]>;
@@ -23,6 +25,7 @@ declare global {
       deleteProfile(id: string): Promise<Profile[]>;
       restoreSession(): Promise<{ repositories: Repository[]; activeIndex: number }>;
       saveSession(paths: string[], activeIndex: number): Promise<void>;
+      activateRepository(root: string | null): Promise<void>;
       openRepository(): Promise<Repository | null>;
       createRepository(input: { name: string; parentPath: string; branch: string }): Promise<Repository>;
       cloneRepository(input: { url: string; parentPath: string }): Promise<Repository>;
@@ -50,6 +53,7 @@ declare global {
 
 function App() {
   const [ready, setReady] = useState<boolean | null>(null);
+  useEffect(() => { if (ready !== null) window.gitforge.workspaceReady(); }, [ready]);
   const [sessionReady, setSessionReady] = useState(false);
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const activeProfile = profiles.find(profile => profile.active);
@@ -82,6 +86,12 @@ function App() {
     setRepositories(previous => Object.fromEntries(Object.entries(previous).map(([id, value]) => [id, value.path === repo.path ? repo : value])));
   }), []);
   useEffect(() => window.gitforge.onRefreshError(error => setOpenError(error.message)), []);
+  const activeRoot = active === null ? null : repositories[active]?.path ?? null;
+  useEffect(() => {
+    if (!sessionReady) return;
+    diffCache.activate(activeRoot);
+    void window.gitforge.activateRepository(activeRoot).catch(error => setOpenError(String(error)));
+  }, [sessionReady, activeRoot]);
   const openRepository = async (newWindow: boolean) => {
     if (opening) return;
     setOpening(true); setOpenError('');
@@ -187,7 +197,7 @@ function App() {
         <nav aria-label="Preferences pages"><button aria-current="page" className="selected">Profiles</button></nav>
         <p className="application-version" aria-label="Application version">Version {version}</p>
       </aside><main className="preference-page"><ProfilesPage profiles={profiles} updated={values => { setProfiles(values); setPreferences(true); }}/></main>
-    </div> : active !== null && repositories[active] ? <RepositoryView key={active} initial={repositories[active]} updated={repo => setRepositories(previous => ({ ...previous, [active]: repo }))}/> : active !== null ? <main className="welcome"><h1>Repositories</h1><div className="actions">
+    </div> : active !== null && repositories[active] ? <RepositoryView key={active} tabId={active} initial={repositories[active]} updated={repo => setRepositories(previous => ({ ...previous, [active]: repo }))}/> : active !== null ? <main className="welcome"><h1>Repositories</h1><div className="actions">
       <button disabled={opening} onClick={() => void openRepository(false)}><span aria-hidden="true">▰</span> Open</button>
       <button onClick={() => setCloneTarget({ tab: active })}><span aria-hidden="true">↓</span> Clone</button>
       <button onClick={() => setCreateTarget({ tab: active })}><span aria-hidden="true">⊞</span> Create</button>

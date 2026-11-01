@@ -30,10 +30,11 @@ if (customDirectory) {
 const primaryInstance = app.requestSingleInstanceLock();
 if (!primaryInstance) app.quit();
 app.on('second-instance', () => {
-  if (!window || window.isDestroyed()) return;
+  if (!window || window.isDestroyed() || !workspaceReady) return;
   if (window.isMinimized()) window.restore();
   window.show(); window.focus();
 });
+let workspaceReady = false;
 
 if (primaryInstance) app.whenReady().then(async () => {
   app.setAppUserModelId('com.gitforge.desktop');
@@ -61,18 +62,30 @@ if (primaryInstance) app.whenReady().then(async () => {
   const snapshots = new Map();
   let restoredActive = 0;
   if (gitAvailable) {
-    for (const saved of session.load()) {
-      try {
-        const data = await repository.openRepository(saved.path);
-        opened.add(data.path);
-        if (saved.active) restoredActive = restored.length;
-        restored.push(data);
-      } catch { /* Missing or no longer readable repositories do not get tabs. */ }
+    const saved = session.load();
+    const loaded = await Promise.allSettled(saved.map(entry => repository.openRepository(entry.path)));
+    for (let index = 0; index < loaded.length; index++) {
+      const result = loaded[index];
+      if (result.status !== 'fulfilled') continue;
+      if (saved[index].active) restoredActive = restored.length;
+      opened.add(result.value.path); restored.push(result.value);
     }
     session.save(restored.map(repo => repo.path), restoredActive);
   }
   const send = action => window?.webContents.send('menu-action', action);
   savedRoots = restored.map(repo => repo.path);
+  let activeRoot = restored[restoredActive]?.path ?? null;
+  const localScans = new Map();
+  const scanLocal = root => {
+    if (localScans.has(root)) return localScans.get(root);
+    const scan = (async () => {
+      if (operations.has(root)) return;
+      const version = operationVersions.get(root);
+      const data = await repository.snapshot(root);
+      if (!operations.has(root) && operationVersions.get(root) === version && activeRoot === root) publish(data);
+    })().finally(() => localScans.delete(root));
+    localScans.set(root, scan); return scan;
+  };
   restored.forEach(repo => snapshots.set(repo.path, JSON.stringify(repo)));
   const publish = data => {
     const value = JSON.stringify(data);
@@ -110,11 +123,20 @@ if (primaryInstance) app.whenReady().then(async () => {
     ipcMain.handle(channel, async (_event, ...args) => { const result = await profiles[method](...args); updateMenu(); return result; });
   }
   ipcMain.handle('git-status', () => gitAvailable);
+  ipcMain.on('workspace-ready', () => {
+    if (!window || window.isDestroyed() || workspaceReady) return;
+    workspaceReady = true; window.show();
+  });
   ipcMain.handle('restore-session', () => ({ repositories: restored, activeIndex: restoredActive }));
   ipcMain.handle('save-session', (_event, paths, activeIndex) => {
     if (!gitAvailable || !Array.isArray(paths) || !paths.every(root => opened.has(root)) || !Number.isInteger(activeIndex)) throw new Error(Message["repository.sessionInvalid"]);
     savedRoots = [...new Set(paths)];
     session.save(paths, activeIndex);
+  });
+  ipcMain.handle('activate-repository', async (_event, root) => {
+    if (root !== null && !opened.has(root)) throw new Error(Message['repository.open.required']);
+    activeRoot = root;
+    if (root) await scanLocal(root);
   });
   ipcMain.handle('open-repository', async () => {
     requireProfile();
@@ -175,20 +197,15 @@ if (primaryInstance) app.whenReady().then(async () => {
     });
   }
   ipcMain.on('tab-active', (_event, active) => { tabActive = active === true; updateMenu(); });
-  window = new BrowserWindow({ width: 1200, height: 800, minWidth: 680, minHeight: 440, title: 'GitForge', icon: path.join(__dirname, '../assets/gitforge.ico'), backgroundColor: '#1e2025', webPreferences: {
+  window = new BrowserWindow({ show: false, width: 1200, height: 800, minWidth: 680, minHeight: 440, title: 'GitForge', icon: path.join(__dirname, '../assets/gitforge.ico'), backgroundColor: '#1e2025', webPreferences: {
     preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true
   } });
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', event => event.preventDefault());
   await window.loadFile(path.join(__dirname, '../dist/index.html'));
   const stopRefresh = startRefresh({
-    roots: () => gitAvailable && profiles.list().length ? savedRoots : [],
-    local: async root => {
-      if (operations.has(root)) return;
-      const version = operationVersions.get(root);
-      const data = await repository.snapshot(root);
-      if (!operations.has(root) && operationVersions.get(root) === version && savedRoots.includes(root)) publish(data);
-    },
+    roots: () => gitAvailable && profiles.list().length && activeRoot && savedRoots.includes(activeRoot) ? [activeRoot] : [],
+    local: scanLocal,
     remote: async root => {
       if (operations.has(root)) return;
       if (await require('./conflicts.cjs').load(root)) return;

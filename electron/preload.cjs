@@ -1,6 +1,7 @@
 const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('gitforge', {
   gitStatus: () => ipcRenderer.invoke('git-status'),
+  workspaceReady: () => ipcRenderer.send('workspace-ready'),
   listProfiles: () => ipcRenderer.invoke('list-profiles'),
   refreshProfileStatus: () => ipcRenderer.invoke('refresh-profile-status'),
   createProfile: input => ipcRenderer.invoke('create-profile', input),
@@ -9,6 +10,7 @@ contextBridge.exposeInMainWorld('gitforge', {
   deleteProfile: id => ipcRenderer.invoke('delete-profile', id),
   restoreSession: () => ipcRenderer.invoke('restore-session'),
   saveSession: (paths, activeIndex) => ipcRenderer.invoke('save-session', paths, activeIndex),
+  activateRepository: root => ipcRenderer.invoke('activate-repository', root),
   openRepository: () => ipcRenderer.invoke('open-repository'),
   createRepository: input => ipcRenderer.invoke('create-repository', input),
   cloneRepository: input => ipcRenderer.invoke('clone-repository', input),

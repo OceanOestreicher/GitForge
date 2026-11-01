@@ -59,6 +59,19 @@ test('checking out an old branch automatically loads history and scrolls its cur
   await expect(row(base)).toBeInViewport(); expect(git('branch', '--show-current')).toBe('old-alias');
 });
 
+test('automatic commit navigation scrolls vertically without panning wide histories sideways', async () => {
+  const base = await longHistory();
+  git('-c', 'user.name=A long author name that makes this history wider than its viewport', 'commit', '--allow-empty', '-m', 'A long commit subject that keeps the history table wider than its available viewport');
+  git('switch', 'old'); await open();
+  await expect(row(base)).toBeInViewport();
+  await expect.poll(() => page.locator('.history').evaluate(element => element.scrollLeft)).toBe(0);
+  await expect.poll(() => page.locator('.repo-center').evaluate(element => element.scrollLeft)).toBe(0);
+  await page.locator('.sidebar-group').first().locator('.branch-row').filter({ hasText: /^main$/ }).dblclick();
+  await expect(page.locator('.repo-name')).toContainText('main');
+  await expect.poll(() => page.locator('.history').evaluate(element => element.scrollLeft)).toBe(0);
+  await expect.poll(() => page.locator('.repo-center').evaluate(element => element.scrollLeft)).toBe(0);
+});
+
 test('a clickable parent loads another history page, scrolls to the parent and selects its commit information', async () => {
   await longHistory(); const child = git('rev-list', '--skip=199', '--max-count=1', 'main'), parent = git('rev-parse', `${child}^`);
   await open(); await expect(row(parent)).toHaveCount(0);

@@ -154,8 +154,19 @@ export function RepositoryView({ initial, updated, tabId }: { initial: Repositor
   useEffect(() => {
     if (!scrollRequest || selection || repo.conflict) return;
     const frame = requestAnimationFrame(() => {
-      const row = historyElement.current?.querySelector<HTMLElement>(`[data-commit-hash="${scrollRequest.hash}"]`);
-      if (row) { row.scrollIntoView({ block: 'nearest' }); setScrollRequest(previous => previous?.id === scrollRequest.id ? null : previous); }
+      const container = historyElement.current;
+      const row = container?.querySelector<HTMLElement>(`[data-commit-hash="${scrollRequest.hash}"]`);
+      if (container && row) {
+        // scrollIntoView also pans wide tables horizontally, consuming the
+        // history inset. Commit navigation should only change vertical scroll.
+        const bounds = container.getBoundingClientRect(), target = row.getBoundingClientRect();
+        const style = getComputedStyle(container);
+        const top = bounds.top + container.clientTop + parseFloat(style.paddingTop);
+        const bottom = bounds.top + container.clientTop + container.clientHeight - parseFloat(style.paddingBottom);
+        if (target.top < top) container.scrollTop += target.top - top;
+        else if (target.bottom > bottom) container.scrollTop += target.bottom - bottom;
+        setScrollRequest(previous => previous?.id === scrollRequest.id ? null : previous);
+      }
     });
     return () => cancelAnimationFrame(frame);
   }, [scrollRequest, repo.commits.length, selection, Boolean(repo.conflict)]);

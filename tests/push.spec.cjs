@@ -23,6 +23,76 @@ async function open(app) {
 }
 const row = (page, group, file) => page.getByRole('region', { name: group, exact: true }).locator('.file-row').filter({ hasText: file });
 
+async function holdRemote(app, moduleName, method, fail = false) {
+  await app.evaluate(({ app }, { moduleName, method, fail }) => {
+    const load = process.getBuiltinModule('module').createRequire(`${app.getAppPath()}/electron/main.cjs`);
+    const module = load(`./${moduleName}.cjs`), original = module[method];
+    process.remoteGates ??= {}; process.remoteStarted ??= {};
+    const gate = new Promise(resolve => { process.remoteGates[method] = resolve; });
+    module[method] = async (...args) => {
+      process.remoteStarted[method] = true; await gate; module[method] = original;
+      if (fail) throw new Error('Controlled push failure');
+      return original(...args);
+    };
+  }, { moduleName, method, fail });
+}
+const releaseRemote = (app, method) => app.evaluate((_, method) => process.remoteGates[method](), method);
+
+test('branch spinner covers push preparation, normal push and confirmed force push, and clears after failure', async () => {
+  git('push', '-u', 'origin', 'main');
+  await fs.writeFile(path.join(root, 'local.txt'), 'first\n'); git('add', '.'); git('commit', '-m', 'Local first');
+  const app = await launchElectron();
+  try {
+    const page = await open(app);
+    const main = page.locator('.sidebar-group').first().locator('.branch-row').filter({ hasText: /^main/ });
+    const progress = main.getByRole('status', { name: 'Branch operation in progress', exact: true });
+    await holdRemote(app, 'push', 'destination'); await holdRemote(app, 'push', 'push');
+    await page.locator('.repo-buttons').getByRole('button', { name: 'Push', exact: true }).click();
+    await expect(progress).toBeVisible(); await releaseRemote(app, 'destination');
+    await expect.poll(() => app.evaluate(() => Boolean(process.remoteStarted.push))).toBe(true);
+    await expect(progress).toBeVisible(); await releaseRemote(app, 'push');
+    await expect(progress).toHaveCount(0);
+    await fs.writeFile(path.join(root, 'local.txt'), 'second\n'); git('add', '.'); git('commit', '-m', 'Local second');
+    await expect(page.locator('.repo-buttons').getByRole('button', { name: 'Push', exact: true })).toBeEnabled();
+    for (const fail of [true, false]) {
+      await page.getByRole('button', { name: 'Push options', exact: true }).click();
+      await page.getByRole('button', { name: 'Force Push', exact: true }).click();
+      const dialog = page.getByRole('dialog'); await expect(dialog).toBeVisible();
+      await expect(progress).toHaveCount(0);
+      await holdRemote(app, 'push', 'push', fail);
+      await dialog.getByRole('button', { name: 'Confirm Force Push', exact: true }).click();
+      await expect(progress).toBeVisible(); await releaseRemote(app, 'push');
+      await expect(progress).toHaveCount(0);
+      if (fail) {
+        await expect(dialog.getByRole('alert')).toContainText('Controlled push failure');
+        await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+      } else await expect(dialog).toHaveCount(0);
+    }
+    expect(git('--git-dir', remote, 'rev-parse', 'main')).toBe(git('rev-parse', 'HEAD'));
+  } finally { await app.close(); }
+});
+
+test('pull spinner follows the selected branch for context actions and the checked-out branch for toolbar actions', async () => {
+  git('push', '-u', 'origin', 'main'); git('branch', 'feature'); git('push', '-u', 'origin', 'feature');
+  const incoming = git('commit-tree', 'HEAD^{tree}', '-p', 'HEAD', '-m', 'Remote feature change');
+  git('push', 'origin', `${incoming}:refs/heads/feature`); git('fetch', 'origin');
+  const app = await launchElectron();
+  try {
+    const page = await open(app), rows = page.locator('.sidebar-group').first().locator('.branch-row');
+    const main = rows.filter({ hasText: /^main/ }), feature = rows.filter({ hasText: /^feature/ });
+    await holdRemote(app, 'pull', 'pullBranch');
+    await feature.click({ button: 'right' }); await page.getByRole('menuitem', { name: 'Pull', exact: true }).click();
+    await expect(feature.getByRole('status')).toBeVisible(); await expect(main.getByRole('status')).toHaveCount(0);
+    expect(git('branch', '--show-current')).toBe('main');
+    await releaseRemote(app, 'pullBranch'); await expect(feature.getByRole('status')).toHaveCount(0);
+    expect(git('rev-parse', 'feature')).toBe(incoming);
+    await holdRemote(app, 'pull', 'pull');
+    await page.locator('.repo-buttons').getByRole('button', { name: 'Pull', exact: true }).click();
+    await expect(main.getByRole('status')).toBeVisible(); await expect(feature.getByRole('status')).toHaveCount(0);
+    await releaseRemote(app, 'pull'); await expect(main.getByRole('status')).toHaveCount(0);
+  } finally { await app.close(); }
+});
+
 test('Stage All and Unstage All affect every file regardless of selection', async () => {
   await fs.writeFile(path.join(root, 'tracked.txt'), 'changed\n');
   await fs.writeFile(path.join(root, 'new.txt'), 'new\n');

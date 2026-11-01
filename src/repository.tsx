@@ -209,16 +209,18 @@ export function RepositoryView({ initial, updated, tabId }: { initial: Repositor
   };
   const startPush = async (force: boolean, branch = repo.branch) => {
     if (busy || !repo.local.includes(branch) || (repo.remoteBranches[branch] && !repo.ahead[branch])) return; setBusy(true); setError(''); setPushMenu(false);
+    setPendingBranch(`refs/heads/${branch}`);
     try {
       const plan = await window.gitforge.preparePush(repo.path, branch);
       if (force || plan.needsBranch || plan.needsRepository) setPushDialog({ plan, force });
       else accept(await window.gitforge.pushCommits(repo.path, { force: false, branch }));
-    } catch(error) { setError(message(error)); } finally { setBusy(false); }
+    } catch(error) { setError(message(error)); } finally { setBusy(false); setPendingBranch(null); }
   };
   const runRemote = async (action: 'fetch' | 'pull', ref?: string) => {
     if (busy) return; setBusy(true); setError('');
+    if (action === 'pull') setPendingBranch(ref ?? `refs/heads/${repo.branch}`);
     try { accept(await (action === 'fetch' ? window.gitforge.fetchRepository(repo.path, ref) : window.gitforge.pullRepository(repo.path, ref?.slice(11)))); }
-    catch(error) { setError(message(error)); } finally { setBusy(false); }
+    catch(error) { setError(message(error)); } finally { setBusy(false); setPendingBranch(null); }
   };
   useEffect(() => {
     setRepo(previous => {
@@ -398,7 +400,11 @@ export function RepositoryView({ initial, updated, tabId }: { initial: Repositor
 
     </div>
     {confirmingAbort && <AbortMergeDialog close={() => setConfirmingAbort(false)} execute={async () => { accept(await window.gitforge.conflictAction(repo.path, { action: 'abort' })); setSelected(null); }}/>}
-    {pushDialog && <PushDialog plan={pushDialog.plan} force={pushDialog.force} close={() => setPushDialog(null)} pushed={async input => { const value = await window.gitforge.pushCommits(repo.path, input); accept(value); setPushDialog(null); }}/ >}
+    {pushDialog && <PushDialog plan={pushDialog.plan} force={pushDialog.force} close={() => setPushDialog(null)} pushed={async input => {
+      setBusy(true); setPendingBranch(`refs/heads/${input.branch ?? repo.branch}`);
+      try { const value = await window.gitforge.pushCommits(repo.path, input); accept(value); setPushDialog(null); }
+      finally { setBusy(false); setPendingBranch(null); }
+    }}/ >}
     {prompt && <BranchDialog prompt={prompt} close={() => setPrompt(null)} execute={executeBranch}/>}
     {context && <div role="menu" className="context-menu" style={{ left: context.x, top: context.y }}>
       {context.kind === 'commit' && <><button role="menuitem" onClick={() => runBranch({ action: 'checkout', hash: context.target })}>Checkout Commit</button><button role="menuitem" onClick={() => setPrompt({ kind: 'create', input: { action: 'create', hash: context.target } })}>Create Branch From Commit</button><button role="menuitem" disabled={!context.canReset} onClick={() => setPrompt({ kind: 'reset', input: { action: 'reset', hash: context.target } })}>Reset Branch To Commit</button></>}

@@ -41,3 +41,21 @@ test('staged/unstaged and file versions have separate cache entries and failures
   await cache.load('repo', { path: 'file' }, 'v2');
   expect(calls).toBe(4);
 });
+
+test('leaving a file viewport cancels only that queued prefetch and preserves explicit file requests', async () => {
+  const started: string[] = [], release = new Map<string, (value: string) => void>();
+  const cache = new DiffCache((_root, request) => new Promise(resolve => { started.push(request.path); release.set(request.path, resolve); }));
+  const first = cache.load('repo', { path: 'a' }, 'v1', 1), second = cache.load('repo', { path: 'b' }, 'v1', 1);
+  await expect.poll(() => started).toEqual(['a', 'b']);
+  const obsolete = cache.load('repo', { path: 'offscreen' }, 'v1', 1).catch(error => error.name);
+  const neighbor = cache.load('repo', { path: 'neighboring-pane' }, 'v1', 1);
+  const clicked = cache.load('repo', { path: 'clicked' }, 'v1');
+  cache.cancelPrefetch('repo', { path: 'offscreen' }, 'v1');
+  cache.cancelPrefetch('repo', { path: 'clicked' }, 'v1');
+  await expect(obsolete).resolves.toBe('AbortError');
+  release.get('a')!('a'); await first;
+  await expect.poll(() => started).toEqual(['a', 'b', 'clicked']);
+  release.get('b')!('b'); await second;
+  await expect.poll(() => started).toEqual(['a', 'b', 'clicked', 'neighboring-pane']);
+  release.get('clicked')!('clicked'); release.get('neighboring-pane')!('neighbor'); await Promise.all([clicked, neighbor]);
+});

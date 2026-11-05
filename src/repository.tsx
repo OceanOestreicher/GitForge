@@ -22,7 +22,7 @@ export type Commit = { hash: string; parents: string[]; author: string; date: st
 export type Repository = { path: string; name: string; loading?: boolean; branch: string; head: string | null; local: string[]; remote: string[]; ahead: Record<string, number>; behind: Record<string, number>; fileVersion: string; unpushed: number; canPush: boolean; mergePending: boolean; conflict: Conflict | null; remoteBranches: Record<string, { ref: string; remote: string; branch: string }>; stashes: string[]; stashEntries: { ref: string; hash: string; message: string }[]; staged: FileChange[]; unstaged: FileChange[]; commits: Commit[] };
 type Selection = { file: FileChange; staged?: boolean; hash?: string };
 
-function FileList({ files, tree, select, selectedPath, markedPaths = [], doubleClick, discard, contextMenu }: { files: FileChange[]; tree: boolean; select: (file: FileChange, event: React.MouseEvent<HTMLButtonElement>) => void; selectedPath?: string; markedPaths?: string[]; doubleClick?: (file: FileChange) => void; discard?: () => void; contextMenu?: (file: FileChange, event: React.MouseEvent<HTMLButtonElement>) => void }) {
+function FileList({ files, tree, select, selectedPath, markedPaths = [], doubleClick, discard, contextMenu, prefetch }: { files: FileChange[]; tree: boolean; select: (file: FileChange, event: React.MouseEvent<HTMLButtonElement>) => void; selectedPath?: string; markedPaths?: string[]; doubleClick?: (file: FileChange) => void; discard?: () => void; contextMenu?: (file: FileChange, event: React.MouseEvent<HTMLButtonElement>) => void; prefetch?: (file: FileChange) => () => void }) {
   const list = useRef<HTMLDivElement>(null);
   const pointer = useRef<{ x: number; y: number } | null>(null);
   const [hoveredPath, setHoveredPath] = useState<string | null>(null);
@@ -51,6 +51,27 @@ function FileList({ files, tree, select, selectedPath, markedPaths = [], doubleC
       window.removeEventListener('resize', update);
     };
   }, [files, tree]);
+  useEffect(() => {
+    const element = list.current;
+    const viewport = element?.closest('.change-scroll,.commit-information');
+    if (!element || !viewport || !prefetch) return;
+    const byPath = new Map(files.map(file => [file.path, file]));
+    const pending = new Map<Element, () => void>();
+    // Native intersection tracking avoids scanning/measuring every row on
+    // scroll. Only this file viewport (plus a few adjacent rows) drives work.
+    const observer = new IntersectionObserver(entries => {
+      for (const entry of entries) {
+        if (entry.isIntersecting && !pending.has(entry.target)) {
+          const file = byPath.get((entry.target as HTMLElement).dataset.filePath ?? '');
+          if (file) pending.set(entry.target, prefetch(file));
+        } else if (!entry.isIntersecting) {
+          pending.get(entry.target)?.(); pending.delete(entry.target);
+        }
+      }
+    }, { root: viewport, rootMargin: '80px 0px', threshold: 0 });
+    element.querySelectorAll('.file-row').forEach(row => observer.observe(row));
+    return () => { observer.disconnect(); pending.forEach(cancel => cancel()); };
+  }, [files, tree, prefetch]);
   const render = (items: FileChange[], prefix = ''): React.ReactNode => {
     const groups = new Map<string, FileChange[]>();
     const leaves: FileChange[] = [];
@@ -80,7 +101,6 @@ export function RepositoryView({ initial, updated, tabId }: { initial: Repositor
   const displayedRelease = useRef<(() => void) | undefined>(undefined);
   const displayedVersion = useRef('');
   const repoRef = useRef(repo); repoRef.current = repo;
-  const repositoryElement = useRef<HTMLDivElement>(null);
   const closeDiff = useCallback(() => {
     requestId.current++; pendingDiff.current = null; fileIntent.current = null;
     pendingRelease.current?.(); pendingRelease.current = undefined;
@@ -336,29 +356,14 @@ export function RepositoryView({ initial, updated, tabId }: { initial: Repositor
   useEffect(() => () => {
     requestId.current++; pendingRelease.current?.(); displayedRelease.current?.(); diffCache.cancelPrefetch(repo.path);
   }, [repo.path]);
-  useEffect(() => {
-    if (repo.conflict) return;
-    const items: Selection[] = selected ? (details?.files ?? []).map(file => ({ file, hash: selected.hash }))
-      : [...repo.unstaged.map(file => ({ file, staged: false })), ...repo.staged.map(file => ({ file, staged: true }))];
-    const element = repositoryElement.current;
-    const visiblePaths = () => new Set(Array.from(element?.querySelectorAll<HTMLElement>('.file-row') ?? []).filter(row => {
-      const rect = row.getBoundingClientRect();
-      const viewport = row.closest('.change-scroll,.commit-information')?.getBoundingClientRect();
-      return rect.height > 0 && rect.bottom > (viewport?.top ?? 0) && rect.top < (viewport?.bottom ?? window.innerHeight);
-    }).map(row => row.dataset.filePath));
-    const prefetch = (visibleOnly = false) => {
-      const visible = visiblePaths();
-      for (const next of items) {
-        if (visibleOnly && !visible.has(next.file.path)) continue;
-        const version = next.hash ?? next.file.version ?? repo.fileVersion;
-        void diffCache.load(repo.path, { ...next.file, staged: next.staged, hash: next.hash }, version, visible.has(next.file.path) ? 1 : 2).catch(() => {});
-      }
-    };
-    prefetch();
-    const scroll = () => prefetch(true);
-    element?.addEventListener('scroll', scroll, true);
-    return () => { element?.removeEventListener('scroll', scroll, true); diffCache.cancelPrefetch(repo.path); };
-  }, [repo.path, repo.fileVersion, selected?.hash, details, Boolean(repo.conflict)]);
+  const prefetchFile = useCallback((file: FileChange, staged?: boolean, hash?: string) => {
+    const request = { ...file, staged, hash }, version = hash ?? file.version ?? repo.fileVersion;
+    void diffCache.load(repo.path, request, version, 1).catch(() => {});
+    return () => diffCache.cancelPrefetch(repo.path, request, version);
+  }, [repo.path, repo.fileVersion]);
+  const prefetchUnstaged = useCallback((file: FileChange) => prefetchFile(file, false), [prefetchFile]);
+  const prefetchStaged = useCallback((file: FileChange) => prefetchFile(file, true), [prefetchFile]);
+  const prefetchCommit = useCallback((file: FileChange) => prefetchFile(file, undefined, selected?.hash), [prefetchFile, selected?.hash]);
   useEffect(() => {
     const close = () => setContext(null);
     const key = (event: KeyboardEvent) => { if (event.key === 'Escape') close(); };
@@ -366,7 +371,7 @@ export function RepositoryView({ initial, updated, tabId }: { initial: Repositor
     return () => { window.removeEventListener('click', close); window.removeEventListener('keydown', key); };
   }, []);
   if (repo.loading) return <main className="notice" role="status">Opening repository…</main>;
-  return <div className="repository" ref={repositoryElement}>
+  return <div className="repository">
     <header className="repo-actions"><div className="repo-name" title={repo.path}><strong>{repo.name}</strong><span>{repo.branch}</span></div><div className="repo-buttons"><button disabled={busy || Boolean(repo.conflict)} onClick={() => void runRemote('pull')}>Pull</button><div className="push-control"><button disabled={busy || Boolean(repo.conflict) || !repo.canPush} onClick={() => void startPush(false)}>Push</button><button disabled={busy || Boolean(repo.conflict) || !repo.canPush} aria-label="Push options" onClick={() => setPushMenu(value => !value)}>&#9662;</button>{pushMenu && <div className="profile-menu"><button onClick={() => void startPush(true)}>Force Push</button></div>}</div><button disabled={busy || Boolean(repo.conflict) || !repo.local.includes(repo.branch)} onClick={() => setPrompt({ kind: 'create', input: { action: 'create', ref: `refs/heads/${repo.branch}` } })}>Branch</button><button disabled={busy || Boolean(repo.conflict)} onClick={() => void runRemote('fetch')}>Fetch</button></div></header>
     {error && <div className="error" role="alert">{error}<button onClick={() => setError('')}>Dismiss</button></div>}
     <div className="repo-layout">
@@ -393,9 +398,9 @@ export function RepositoryView({ initial, updated, tabId }: { initial: Repositor
       </section>
       </main>
       {selected ? <section className="commit-information"><div className="section-heading"><h2>Commit information</h2><button aria-pressed={tree} onClick={() => setTree(value => !value)}>{tree ? 'Path view' : 'Tree view'}</button></div>
-        <><dl className="commit-metadata"><dt>Hash</dt><dd>{selected.hash}</dd><dt>Parents</dt><dd className="parent-commits">{selected.parents.length ? selected.parents.map(parent => <button key={parent} className="parent-commit-link" onClick={() => void navigateToCommit(parent, true)}>{parent}</button>) : 'None (initial commit)'}</dd><dt>Author</dt><dd>{selected.author}</dd><dt>Date</dt><dd>{new Date(selected.date).toLocaleString()}</dd></dl>{details ? <><pre className="commit-message">{details.message}</pre><p className="summary-counts">{details.files.filter(f => f.status === 'A').length} added · {details.files.filter(f => f.status === 'M').length} changed · {details.files.filter(f => f.status === 'D').length} deleted</p><FileList files={details.files} tree={tree} selectedPath={selection?.hash === selected.hash ? selection.file.path : undefined} select={file => toggleFile({ file, hash: selected.hash })}/></> : <p>Loading commit…</p>}</>
+        <><dl className="commit-metadata"><dt>Hash</dt><dd>{selected.hash}</dd><dt>Parents</dt><dd className="parent-commits">{selected.parents.length ? selected.parents.map(parent => <button key={parent} className="parent-commit-link" onClick={() => void navigateToCommit(parent, true)}>{parent}</button>) : 'None (initial commit)'}</dd><dt>Author</dt><dd>{selected.author}</dd><dt>Date</dt><dd>{new Date(selected.date).toLocaleString()}</dd></dl>{details ? <><pre className="commit-message">{details.message}</pre><p className="summary-counts">{details.files.filter(f => f.status === 'A').length} added · {details.files.filter(f => f.status === 'M').length} changed · {details.files.filter(f => f.status === 'D').length} deleted</p><FileList files={details.files} tree={tree} prefetch={prefetchCommit} selectedPath={selection?.hash === selected.hash ? selection.file.path : undefined} select={file => toggleFile({ file, hash: selected.hash })}/></> : <p>Loading commit…</p>}</>
       </section> : 
-      <section className="working-changes"><div className="section-heading"><h2>Working changes</h2><button aria-pressed={tree} onClick={() => setTree(value => !value)}>{tree ? 'Path view' : 'Tree view'}</button></div><section className="change-group"><div className="change-heading"><h3>Unstaged files ({repo.unstaged.length})</h3><button disabled={busy || !repo.unstaged.length} onClick={() => void change('stage', repo.unstaged.map(file => file.path))}>Stage All</button></div><div className="change-scroll" role="region" aria-label="Unstaged files" tabIndex={0}><FileList files={repo.unstaged} tree={tree} selectedPath={selection && !selection.hash && !selection.staged ? selection.file.path : undefined} markedPaths={!picked.staged ? picked.paths : []} select={(file, event) => { setSelected(null); chooseFile(file, false, event); }} doubleClick={file => void change('stage', [file.path])} discard={() => { if (fileIntent.current && !fileIntent.current.staged) void change('discard', [fileIntent.current.file.path]); else if (!picked.staged) void change('discard'); }} contextMenu={(file, event) => fileMenu(false, file, event)}/></div></section><section className="change-group"><div className="change-heading"><h3>Staged files ({repo.staged.length})</h3><button disabled={busy || !repo.staged.length} onClick={() => void change('unstage', repo.staged.map(file => file.path))}>Unstage All</button></div><div className="change-scroll" role="region" aria-label="Staged files" tabIndex={0}><FileList files={repo.staged} tree={tree} selectedPath={selection && !selection.hash && selection.staged ? selection.file.path : undefined} markedPaths={picked.staged ? picked.paths : []} select={(file, event) => { setSelected(null); chooseFile(file, true, event); }} doubleClick={file => void change('unstage', [file.path])} contextMenu={(file, event) => fileMenu(true, file, event)}/></div></section><CommitForm draftKey={`${tabId}:${repo.path}`} busy={busy} staged={Boolean(repo.staged.length)} mergePending={repo.mergePending && !repo.conflict} abort={() => setConfirmingAbort(true)} commit={async input => { if (busy) return false; setBusy(true); setError(""); try { accept(await window.gitforge.commitChanges(repo.path, input)); return true; } catch (error) { setError(message(error)); return false; } finally { setBusy(false); } }}/></section> }
+      <section className="working-changes"><div className="section-heading"><h2>Working changes</h2><button aria-pressed={tree} onClick={() => setTree(value => !value)}>{tree ? 'Path view' : 'Tree view'}</button></div><section className="change-group"><div className="change-heading"><h3>Unstaged files ({repo.unstaged.length})</h3><button disabled={busy || !repo.unstaged.length} onClick={() => void change('stage', repo.unstaged.map(file => file.path))}>Stage All</button></div><div className="change-scroll" role="region" aria-label="Unstaged files" tabIndex={0}><FileList files={repo.unstaged} tree={tree} prefetch={prefetchUnstaged} selectedPath={selection && !selection.hash && !selection.staged ? selection.file.path : undefined} markedPaths={!picked.staged ? picked.paths : []} select={(file, event) => { setSelected(null); chooseFile(file, false, event); }} doubleClick={file => void change('stage', [file.path])} discard={() => { if (fileIntent.current && !fileIntent.current.staged) void change('discard', [fileIntent.current.file.path]); else if (!picked.staged) void change('discard'); }} contextMenu={(file, event) => fileMenu(false, file, event)}/></div></section><section className="change-group"><div className="change-heading"><h3>Staged files ({repo.staged.length})</h3><button disabled={busy || !repo.staged.length} onClick={() => void change('unstage', repo.staged.map(file => file.path))}>Unstage All</button></div><div className="change-scroll" role="region" aria-label="Staged files" tabIndex={0}><FileList files={repo.staged} tree={tree} prefetch={prefetchStaged} selectedPath={selection && !selection.hash && selection.staged ? selection.file.path : undefined} markedPaths={picked.staged ? picked.paths : []} select={(file, event) => { setSelected(null); chooseFile(file, true, event); }} doubleClick={file => void change('unstage', [file.path])} contextMenu={(file, event) => fileMenu(true, file, event)}/></div></section><CommitForm draftKey={`${tabId}:${repo.path}`} busy={busy} staged={Boolean(repo.staged.length)} mergePending={repo.mergePending && !repo.conflict} abort={() => setConfirmingAbort(true)} commit={async input => { if (busy) return false; setBusy(true); setError(""); try { accept(await window.gitforge.commitChanges(repo.path, input)); return true; } catch (error) { setError(message(error)); return false; } finally { setBusy(false); } }}/></section> }
       </>}
 
     </div>

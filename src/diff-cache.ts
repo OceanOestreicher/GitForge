@@ -62,9 +62,10 @@ export class DiffCache {
     this.queue.sort((a, b) => a.priority - b.priority);
     while (this.running < 2 && this.queue.length) this.queue.shift()!.start();
   }
-  cancelPrefetch(root: string) {
+  cancelPrefetch(root: string, request?: DiffRequest, version = '') {
+    const key = request ? this.key(root, request, version) : undefined;
     this.queue = this.queue.filter(job => {
-      if (job.entry.root !== root || job.priority === 0) return true;
+      if (job.entry.root !== root || job.priority === 0 || (key !== undefined && job.entry.key !== key)) return true;
       job.cancel(); return false;
     });
   }

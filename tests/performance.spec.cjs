@@ -28,9 +28,14 @@ const file = (page, group = 'Unstaged files') => page.getByRole('region', { name
 async function instrument(app) {
   await app.evaluate((_, project) => {
     const repository = process.getBuiltinModule('module').createRequire(project + '/electron/main.cjs')('./repository.cjs');
-    process.perfDiffs = 0; process.perfTrackedDiffs = 0; process.perfScans = {};
+    process.perfDiffs = 0; process.perfTrackedDiffs = 0; process.perfScans = {}; process.perfRequests = []; process.perfInFlight = 0; process.perfLastRequestAt = 0;
     const originalDiff = repository.diff, originalSnapshot = repository.snapshot;
-    repository.diff = (...args) => { process.perfDiffs++; if (args[1].path === 'tracked.txt') process.perfTrackedDiffs++; return originalDiff(...args); };
+    repository.diff = (...args) => {
+      process.perfDiffs++; if (args[1].path === 'tracked.txt') process.perfTrackedDiffs++;
+      process.perfRequests.push({ path: args[1].path, staged: Boolean(args[1].staged), hash: args[1].hash });
+      process.perfInFlight++; process.perfLastRequestAt = Date.now();
+      return originalDiff(...args).finally(() => { process.perfInFlight--; });
+    };
     repository.snapshot = (...args) => { process.perfScans[args[0]] = (process.perfScans[args[0]] || 0) + 1; return originalSnapshot(...args); };
   }, path.join(__dirname, '..'));
 }
@@ -219,5 +224,51 @@ test('startup restores every repository before showing the window and tab switch
     await page.getByRole('tab', { name: /first$/ }).click();
     await expect(page.locator('.repo-name')).toContainText('first');
     await expect(page.getByText('Opening repository…', { exact: true })).toHaveCount(0);
+  } finally { await app.close(); }
+});
+
+test('prefetch follows staged, unstaged and commit file viewports; typing never scans or prefetches file rows', async () => {
+  test.setTimeout(60000);
+  for (const group of ['staged', 'unstaged']) {
+    await fs.mkdir(path.join(root, group));
+    await Promise.all(Array.from({ length: 100 }, (_, index) => fs.writeFile(path.join(root, group, `file-${String(index).padStart(3, '0')}.txt`), `${group} file ${index}\n`)));
+  }
+  git(root, 'add', 'staged');
+  const app = await launchElectron();
+  try {
+    await instrument(app); const page = await open(app, root);
+    await expect.poll(() => app.evaluate(() => process.perfRequests.length > 0 && process.perfInFlight === 0 && Date.now() - process.perfLastRequestAt > 200)).toBe(true);
+    const requests = () => app.evaluate(() => process.perfRequests);
+    const initial = await requests();
+    expect(initial.length).toBeLessThan(100);
+    expect(initial.some(request => request.path === 'staged/file-099.txt' || request.path === 'unstaged/file-099.txt')).toBe(false);
+    await page.evaluate(() => {
+      window.fileRowMeasurements = 0; window.textFieldScrolls = 0;
+      const original = Element.prototype.getBoundingClientRect;
+      Element.prototype.getBoundingClientRect = function(...args) {
+        if (this.matches('.file-row,.change-scroll,.commit-information')) window.fileRowMeasurements++;
+        return original.apply(this, args);
+      };
+      document.addEventListener('scroll', event => { if (event.target.matches?.('.commit-form input,.commit-form textarea')) window.textFieldScrolls++; }, true);
+    });
+    const title = 'A long commit title that scrolls horizontally while typing and must never prepare any additional file diffs.';
+    await page.getByLabel('Commit title', { exact: true }).pressSequentially(title, { delay: 1 });
+    await page.getByLabel('Description', { exact: true }).pressSequentially(Array.from({ length: 10 }, (_, index) => `Description line ${index}\n`).join(''), { delay: 1 });
+    await expect(page.getByLabel('Commit title', { exact: true })).toHaveValue(title);
+    await expect.poll(() => page.evaluate(() => window.textFieldScrolls)).toBeGreaterThan(0);
+    expect(await page.evaluate(() => window.fileRowMeasurements)).toBe(0);
+    expect((await requests()).length).toBe(initial.length);
+    await page.getByRole('region', { name: 'Unstaged files', exact: true }).evaluate(element => { element.scrollTop = element.scrollHeight; });
+    await expect.poll(async () => (await requests()).some(request => request.path === 'unstaged/file-099.txt' && !request.staged)).toBe(true);
+    expect((await requests()).some(request => request.path === 'staged/file-099.txt')).toBe(false);
+    await page.getByRole('region', { name: 'Staged files', exact: true }).evaluate(element => { element.scrollTop = element.scrollHeight; });
+    await expect.poll(async () => (await requests()).some(request => request.path === 'staged/file-099.txt' && request.staged)).toBe(true);
+    git(root, 'commit', '-m', 'Committed files for viewport test'); const hash = git(root, 'rev-parse', 'HEAD');
+    await page.locator('.commit-link').filter({ hasText: 'Committed files for viewport test' }).click();
+    await expect(page.locator('.commit-information .file-row').first()).toBeVisible();
+    await expect.poll(async () => (await requests()).some(request => request.hash === hash)).toBe(true);
+    expect((await requests()).some(request => request.hash === hash && request.path === 'staged/file-099.txt')).toBe(false);
+    await page.locator('.commit-information').evaluate(element => { element.scrollTop = element.scrollHeight; });
+    await expect.poll(async () => (await requests()).some(request => request.hash === hash && request.path === 'staged/file-099.txt')).toBe(true);
   } finally { await app.close(); }
 });
